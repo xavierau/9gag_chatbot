@@ -290,6 +290,7 @@ class ChatBotAgent(dspy.Module):
         user_id: str,
         conversation_history: list[dict[str, str]] | None = None,
         session_id: str | None = None,
+        image: dspy.Image | None = None,
     ) -> AgentResponse:
         """Process a user message and generate a response synchronously.
 
@@ -298,6 +299,7 @@ class ChatBotAgent(dspy.Module):
             user_id: Unique identifier for the user.
             conversation_history: Optional list of previous messages.
             session_id: Optional session identifier for tracking.
+            image: Optional image for multimodal input.
 
         Returns:
             AgentResponse with the generated response and metadata.
@@ -333,12 +335,17 @@ class ChatBotAgent(dspy.Module):
         # Execute the ReAct loop
         # Memory storage happens via store_memory tool calls during execution
         try:
-            result = react(
-                user_message=user_message,
-                conversation_history=history_str,
-                memory_context=memory_context,
-                user_id=user_id,
-            )
+            # Build kwargs, only include image if provided
+            call_kwargs = {
+                "user_message": user_message,
+                "conversation_history": history_str,
+                "memory_context": memory_context,
+                "user_id": user_id,
+            }
+            if image is not None:
+                call_kwargs["image"] = image
+
+            result = react(**call_kwargs)
 
             # Extract response - memory storage already happened via tool calls
             response = getattr(result, "response", str(result))
@@ -365,6 +372,7 @@ class ChatBotAgent(dspy.Module):
         user_id: str,
         conversation_history: list[dict[str, str]] | None = None,
         session_id: str | None = None,
+        image: dspy.Image | None = None,
     ) -> AgentResponse:
         """Process a user message and generate a response asynchronously.
 
@@ -385,6 +393,7 @@ class ChatBotAgent(dspy.Module):
             user_id: Unique identifier for the user.
             conversation_history: Optional list of previous messages.
             session_id: Optional session identifier for tracking.
+            image: Optional image for multimodal input.
 
         Returns:
             AgentResponse with the generated response and metadata.
@@ -419,12 +428,17 @@ class ChatBotAgent(dspy.Module):
             # Memory storage happens via store_memory tool calls during execution
             # Expense operations happen via MCP expense_manager tools
             try:
-                result = await react.acall(
-                    user_message=user_message,
-                    conversation_history=history_str,
-                    memory_context=memory_context,
-                    user_id=user_id,
-                )
+                # Build kwargs, only include image if provided
+                call_kwargs = {
+                    "user_message": user_message,
+                    "conversation_history": history_str,
+                    "memory_context": memory_context,
+                    "user_id": user_id,
+                }
+                if image is not None:
+                    call_kwargs["image"] = image
+
+                result = await react.acall(**call_kwargs)
 
                 # Extract response - memory storage already happened via tool calls
                 response = getattr(result, "response", str(result))

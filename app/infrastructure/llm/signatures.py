@@ -5,6 +5,8 @@ Signatures use Pydantic-compatible type annotations for type safety and validati
 """
 
 
+from typing import Optional
+
 import dspy
 from pydantic import BaseModel, Field
 
@@ -49,6 +51,10 @@ class ChatBotSignature(dspy.Signature):
     # Input fields
     user_message: str = dspy.InputField(
         desc="The user's current message or query to respond to"
+    )
+    image: Optional[dspy.Image] = dspy.InputField(
+        desc="Optional image attachment from the user for visual context or analysis",
+        default=None,
     )
     conversation_history: str = dspy.InputField(
         desc="Recent conversation history formatted as 'role: content' pairs, "

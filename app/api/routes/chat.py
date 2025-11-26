@@ -1,6 +1,7 @@
 import logging
 import uuid
 
+import dspy
 from fastapi import APIRouter
 
 from app.core.dependencies import ChatBotAgentDep, SessionMemoryServiceDep
@@ -58,12 +59,19 @@ async def chat(
         logger.debug("[%d] %s: %s", i + 1, msg["role"].upper(), msg["content"][:200])
     logger.debug("=" * 60)
 
+    # Convert image_url to dspy.Image if provided
+    image: dspy.Image | None = None
+    if request.image_url:
+        image = dspy.Image.from_url(request.image_url)
+        logger.debug("Image loaded from URL: %s", request.image_url)
+
     # Call agent with conversation history
     result = await agent.aforward(
         user_message=request.message,
         user_id=user_id,
         conversation_history=conversation_history,
         session_id=session.id,
+        image=image,
     )
 
     # Add assistant response to session history
