@@ -50,3 +50,4 @@ htmlcov/
 
 # macOS
 .DS_Store
+logs/
