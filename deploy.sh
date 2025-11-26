@@ -2,6 +2,20 @@
 
 set -e
 
+# Source shell profile to ensure PATH includes uv and other tools
+if [ -f "$HOME/.bashrc" ]; then
+    source "$HOME/.bashrc"
+elif [ -f "$HOME/.zshrc" ]; then
+    source "$HOME/.zshrc"
+fi
+
+# Also check common uv installation paths
+if [ -f "$HOME/.cargo/bin/uv" ]; then
+    export PATH="$HOME/.cargo/bin:$PATH"
+elif [ -f "$HOME/.local/bin/uv" ]; then
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+
 # Load environment variables
 if [ -f .env ]; then
     export $(grep -v '^#' .env | xargs)
