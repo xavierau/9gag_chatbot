@@ -20,9 +20,9 @@ module.exports = {
   apps: [
     {
       name: appName,
-      script: 'uvicorn',
-      args: `app.main:app --host 0.0.0.0 --port ${port}`,
-      interpreter: '.venv/bin/python',
+      script: '.venv/bin/python',
+      args: `-m uvicorn app.main:app --host 0.0.0.0 --port ${port}`,
+      interpreter: 'none',
       cwd: __dirname,
       env_file: '.env',
       instances: 1,
