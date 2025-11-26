@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__zen__apilookup",
+      "WebSearch",
+      "WebFetch(domain:dspy.ai)",
+      "Bash(uv run pytest:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run python:*)",
+      "Bash(uv pip show:*)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(uv run ruff check:*)",
+      "Bash(curl:*)",
+      "Bash(python3:*)",
+      "Bash(lsof:*)",
+      "WebFetch(domain:docs.mem0.ai)",
+      "Bash(pkill:*)",
+      "Bash(xargs kill -9:*)",
+      "Bash(uv add:*)",
+      "WebFetch(domain:mem0.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:deepwiki.com)",
+      "mcp__zen__debug",
+      "Bash(find:*)",
+      "Bash(cat:*)",
+      "Bash(uv run alembic revision:*)",
+      "Bash(uv run alembic:*)",
+      "WebFetch(domain:gofastmcp.com)",
+      "Bash(alembic revision:*)",
+      "Bash(uv pip list:*)",
+      "Bash(unset:*)",
+      "Bash(.venv/bin/pip list:*)",
+      "Bash(.venv/bin/pytest -v)",
+      "Bash(MCP_USER_ID=test-user timeout 3 uv run:*)",
+      "Bash(git init:*)",
+      "Bash(git remote add:*)",
+      "Bash(git checkout:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
