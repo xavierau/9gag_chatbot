@@ -1,7 +1,9 @@
 import logging
+import tempfile
 import uuid
 
 import dspy
+import httpx
 from fastapi import APIRouter
 
 from app.core.dependencies import ChatBotAgentDep, SessionMemoryServiceDep
@@ -62,8 +64,33 @@ async def chat(
     # Convert image_url to dspy.Image if provided
     image: dspy.Image | None = None
     if request.image_url:
-        image = dspy.Image.from_url(request.image_url)
-        logger.debug("Image loaded from URL: %s", request.image_url)
+        if request.access_token:
+            # Download image with Bearer token authorization
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    request.image_url,
+                    headers={"Authorization": f"Bearer {request.access_token}"},
+                )
+                response.raise_for_status()
+                # Determine file suffix from mime_type
+                suffix = ".jpg"  # default
+                if request.mime_type:
+                    ext_map = {
+                        "image/jpeg": ".jpg",
+                        "image/png": ".png",
+                        "image/gif": ".gif",
+                        "image/webp": ".webp",
+                    }
+                    suffix = ext_map.get(request.mime_type, ".jpg")
+                # Write to temp file and create dspy.Image from it
+                with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                    tmp.write(response.content)
+                    tmp_path = tmp.name
+                image = dspy.Image.from_file(tmp_path)
+                logger.debug("Image downloaded with auth from: %s", request.image_url)
+        else:
+            image = dspy.Image.from_url(request.image_url)
+            logger.debug("Image loaded from URL: %s", request.image_url)
 
     # Call agent with conversation history
     result = await agent.aforward(
