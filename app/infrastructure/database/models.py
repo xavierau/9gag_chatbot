@@ -3,8 +3,9 @@
 This module defines the database models for:
 - Conversation sessions and messages
 - Expense tracking and categories
+- Note management with semantic search
 
-Uses PostgreSQL with JSONB for metadata storage.
+Uses PostgreSQL with JSONB for metadata storage and pgvector for embeddings.
 """
 
 import uuid
@@ -12,6 +13,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Index, Integer, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -189,3 +191,44 @@ class ExpenseCategoryORM(Base):
 
     def __repr__(self) -> str:
         return f"<ExpenseCategoryORM(id={self.id!r}, name={self.name!r})>"
+
+
+# =============================================================================
+# Note Management Models
+# =============================================================================
+
+
+class NoteORM(Base):
+    """SQLAlchemy model for notes.
+
+    Stores user notes with content, AI-generated summaries, and embeddings for semantic search.
+    Embeddings are 768-dimensional vectors from Gemini embedding model.
+    Summary and key_points are automatically generated when notes are created or updated.
+    """
+
+    __tablename__ = "notes"
+
+    id: Mapped[str] = mapped_column(
+        String(50), primary_key=True, default=generate_uuid
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    key_points: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(768), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+
+    __table_args__ = (
+        Index("ix_notes_user_id_created_at", "user_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NoteORM(id={self.id!r}, title={self.title!r})>"
