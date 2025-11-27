@@ -406,3 +406,322 @@ class TestPredefinedCategories:
         """Test checking non-predefined category."""
         assert PredefinedCategory.is_predefined("Custom Category") is False
         assert PredefinedCategory.is_predefined("") is False
+
+
+# =============================================================================
+# Server Tool Category Validation Tests
+# =============================================================================
+
+
+class TestCategoryValidation:
+    """Tests for category validation in expense tools."""
+
+    async def test_create_expense_with_valid_predefined_category(
+        self, mock_context, expense_context
+    ):
+        """Test creating expense with a valid predefined category."""
+        from expense_manager.server import create_expense
+
+        # FastMCP wraps functions as FunctionTool, access the underlying fn
+        result = await create_expense.fn(
+            ctx=mock_context,
+            amount=50.0,
+            description="Lunch",
+            category="Food & Dining",
+            expense_date="2024-01-15",
+        )
+
+        assert "error" not in result
+        assert result["category_name"] == "Food & Dining"
+
+    async def test_create_expense_with_valid_custom_category(
+        self, mock_context, expense_context, sample_category
+    ):
+        """Test creating expense with a valid custom category."""
+        from expense_manager.server import create_expense
+
+        result = await create_expense.fn(
+            ctx=mock_context,
+            amount=30.0,
+            description="Cat food",
+            category="Pet Supplies",
+            expense_date="2024-01-15",
+        )
+
+        assert "error" not in result
+        assert result["category_name"] == "Pet Supplies"
+
+    async def test_create_expense_with_invalid_category(
+        self, mock_context, expense_context
+    ):
+        """Test creating expense with invalid category returns error."""
+        from expense_manager.server import create_expense
+
+        result = await create_expense.fn(
+            ctx=mock_context,
+            amount=50.0,
+            description="Random expense",
+            category="InvalidCategory",
+            expense_date="2024-01-15",
+        )
+
+        assert "error" in result
+        assert "Invalid category" in result["error"]
+        assert "InvalidCategory" in result["error"]
+        assert "Must be one of" in result["error"]
+
+    async def test_create_expense_with_free_text_category_rejected(
+        self, mock_context, expense_context
+    ):
+        """Test that free text categories are rejected."""
+        from expense_manager.server import create_expense
+
+        result = await create_expense.fn(
+            ctx=mock_context,
+            amount=41.0,
+            description="雪山叉燒包",
+            category="餐飲",  # Chinese free text, not a valid category
+            expense_date="2024-01-15",
+        )
+
+        assert "error" in result
+        assert "Invalid category" in result["error"]
+
+    async def test_update_expense_with_valid_category(
+        self, mock_context, expense_context, sample_expense
+    ):
+        """Test updating expense with a valid category."""
+        from expense_manager.server import update_expense
+
+        result = await update_expense.fn(
+            ctx=mock_context,
+            expense_id=sample_expense.id,
+            category="Transportation",
+        )
+
+        assert "error" not in result
+        assert result["category_name"] == "Transportation"
+
+    async def test_update_expense_with_invalid_category(
+        self, mock_context, expense_context, sample_expense
+    ):
+        """Test updating expense with invalid category returns error."""
+        from expense_manager.server import update_expense
+
+        result = await update_expense.fn(
+            ctx=mock_context,
+            expense_id=sample_expense.id,
+            category="交通",  # Invalid free text category
+        )
+
+        assert "error" in result
+        assert "Invalid category" in result["error"]
+        assert "交通" in result["error"]
+
+    async def test_update_expense_without_category_change(
+        self, mock_context, expense_context, sample_expense
+    ):
+        """Test updating expense without changing category succeeds."""
+        from expense_manager.server import update_expense
+
+        result = await update_expense.fn(
+            ctx=mock_context,
+            expense_id=sample_expense.id,
+            description="Updated description",
+        )
+
+        assert "error" not in result
+        assert result["description"] == "Updated description"
+
+
+# =============================================================================
+# Search Tests
+# =============================================================================
+
+
+class TestExpenseSearch:
+    """Tests for expense search functionality."""
+
+    async def test_search_by_description(self, db_session, test_user_id, sample_expenses):
+        """Test searching expenses by description."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        results = await repo.search(query_text="Grocery")
+
+        assert len(results) == 1
+        assert "Grocery" in results[0].description
+
+    async def test_search_case_insensitive(self, db_session, test_user_id, sample_expenses):
+        """Test that search is case-insensitive."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # Search with different case
+        results_lower = await repo.search(query_text="grocery")
+        results_upper = await repo.search(query_text="GROCERY")
+
+        assert len(results_lower) == 1
+        assert len(results_upper) == 1
+        assert results_lower[0].id == results_upper[0].id
+
+    async def test_search_partial_match(self, db_session, test_user_id, sample_expenses):
+        """Test that search matches partial text."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # "MTR" should match "MTR monthly pass"
+        results = await repo.search(query_text="MTR")
+
+        assert len(results) == 1
+        assert "MTR" in results[0].description
+
+    async def test_search_with_date_filter(self, db_session, test_user_id, sample_expenses):
+        """Test searching with date range filter."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # Search for expenses containing "Dinner" within date range
+        results = await repo.search(
+            query_text="Dinner",
+            start_date=date(2024, 1, 15),
+            end_date=date(2024, 1, 20),
+        )
+
+        assert len(results) == 1
+        assert "Dinner" in results[0].description
+
+    async def test_search_with_category_filter(
+        self, db_session, test_user_id, sample_expenses
+    ):
+        """Test searching with category filter."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # Search for "bill" only in Utilities category
+        results = await repo.search(query_text="bill", category="Utilities")
+
+        assert len(results) == 1
+        assert results[0].category_name == "Utilities"
+
+    async def test_search_no_results(self, db_session, test_user_id, sample_expenses):
+        """Test search returns empty list when no matches."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        results = await repo.search(query_text="nonexistent_term_xyz")
+
+        assert len(results) == 0
+
+    async def test_search_in_merchant_name(self, db_session, test_user_id, sample_expense):
+        """Test searching by merchant name."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # sample_expense has merchant_name="Test Restaurant"
+        results = await repo.search(query_text="Restaurant")
+
+        assert len(results) == 1
+        assert results[0].merchant_name == "Test Restaurant"
+
+    async def test_search_in_notes(self, db_session, test_user_id, sample_expense):
+        """Test searching by notes field."""
+        repo = ExpenseRepository(db_session, test_user_id)
+
+        # sample_expense has notes="Business lunch"
+        results = await repo.search(query_text="Business")
+
+        assert len(results) == 1
+        assert "Business" in results[0].notes
+
+
+class TestSearchExpensesTool:
+    """Tests for search_expenses MCP tool."""
+
+    async def test_search_tool_basic(self, mock_context, expense_context, sample_expenses):
+        """Test search_expenses tool with basic query."""
+        from expense_manager.server import search_expenses
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="Grocery",
+        )
+
+        assert "error" not in result
+        assert result["count"] == 1
+        assert result["query"] == "Grocery"
+
+    async def test_search_tool_with_filters(
+        self, mock_context, expense_context, sample_expenses
+    ):
+        """Test search_expenses tool with date and category filters."""
+        from expense_manager.server import search_expenses
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="bill",
+            category="Utilities",
+            start_date="2024-01-01",
+            end_date="2024-01-31",
+        )
+
+        assert "error" not in result
+        assert result["count"] == 1
+
+    async def test_search_tool_empty_query_error(self, mock_context, expense_context):
+        """Test search_expenses returns error for empty query."""
+        from expense_manager.server import search_expenses
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="",
+        )
+
+        assert "error" in result
+        assert "empty" in result["error"].lower()
+
+    async def test_search_tool_whitespace_query_error(self, mock_context, expense_context):
+        """Test search_expenses returns error for whitespace-only query."""
+        from expense_manager.server import search_expenses
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="   ",
+        )
+
+        assert "error" in result
+        assert "empty" in result["error"].lower()
+
+    async def test_search_tool_invalid_date_format(self, mock_context, expense_context):
+        """Test search_expenses returns error for invalid date."""
+        from expense_manager.server import search_expenses
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="test",
+            start_date="invalid-date",
+        )
+
+        assert "error" in result
+        assert "Invalid start_date" in result["error"]
+
+    async def test_search_chinese_text(self, mock_context, expense_context, db_session, test_user_id):
+        """Test searching with Chinese characters."""
+        from expense_manager.server import search_expenses
+
+        # Create an expense with Chinese description
+        from app.infrastructure.database.models import ExpenseORM
+
+        expense = ExpenseORM(
+            user_id=test_user_id,
+            amount=Decimal("41.00"),
+            currency="HKD",
+            description="雪山叉燒包",
+            category_name="Food & Dining",
+            expense_date=date(2024, 1, 15),
+            merchant_name="大快活",
+        )
+        db_session.add(expense)
+        await db_session.flush()
+
+        result = await search_expenses.fn(
+            ctx=mock_context,
+            query="叉燒",
+        )
+
+        assert "error" not in result
+        assert result["count"] == 1
+        assert "叉燒" in result["expenses"][0]["description"]

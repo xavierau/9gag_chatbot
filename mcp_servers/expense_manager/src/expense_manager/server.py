@@ -13,31 +13,48 @@ Usage:
     MCP_USER_ID=user123 uv run fastmcp run src/expense_manager/server.py
 """
 
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
 from decimal import Decimal
+from typing import Literal
+import dspy
 
 from fastmcp import Context, FastMCP
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from expense_manager.config import settings
 from expense_manager.constants import PredefinedCategory
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# Type alias for category - uses Literal for schema generation
+# Note: Custom categories are validated at runtime, not in type system
+CategoryType = Literal[
+    "Food & Dining",
+    "Transportation",
+    "Utilities",
+    "Entertainment",
+    "Shopping",
+    "Healthcare",
+    "Housing & Rent",
+    "Education",
+    "Travel",
+    "Subscriptions",
+    "Other",
+]
 from expense_manager.context import ExpenseContext
 from expense_manager.models import (
-    CategoryCreate,
     CategoryResponse,
-    CategorySummary,
     ExpenseCreate,
-    ExpenseListFilter,
     ExpenseResponse,
-    ExpenseSummary,
     ExpenseUpdate,
-    GroupedExpenseSummary,
-    MonthlyTrend,
-    MonthlyTrendResponse,
-    TopCategoriesResponse,
-    TopCategory,
 )
 from expense_manager.repository import CategoryRepository, ExpenseRepository
 
@@ -135,7 +152,7 @@ async def create_expense(
     ctx: Context,
     amount: float,
     description: str,
-    category: str,
+    category: CategoryType | str,
     expense_date: str,
     currency: str | None = None,
     merchant_name: str | None = None,
@@ -150,7 +167,10 @@ async def create_expense(
     Args:
         amount: Expense amount (must be positive)
         description: Description of the expense
-        category: Category name for the expense
+        category: Category name (predefined or custom). Predefined categories:
+            Food & Dining, Transportation, Utilities, Entertainment, Shopping,
+            Healthcare, Housing & Rent, Education, Travel, Subscriptions, Other.
+            Custom categories can be created via create_category tool.
         expense_date: Date of expense in YYYY-MM-DD format
         currency: Currency code (default: HKD)
         merchant_name: Merchant or vendor name
@@ -188,6 +208,18 @@ async def create_expense(
 
     # Create a new session for this request
     async with expense_ctx.get_session() as session:
+        # Validate category exists (predefined or custom)
+        category_repo = CategoryRepository(session, expense_ctx.user_id)
+        if not await category_repo.exists(expense_data.category_name):
+            predefined = PredefinedCategory.values()
+            custom_categories = await category_repo.list_active()
+            custom_names = [c.name for c in custom_categories]
+            all_categories = predefined + custom_names
+            return {
+                "error": f"Invalid category: '{expense_data.category_name}'. "
+                f"Must be one of: {all_categories}"
+            }
+
         repo = ExpenseRepository(session, expense_ctx.user_id)
 
         expense = await repo.create(
@@ -242,6 +274,8 @@ async def list_expenses(
 ) -> dict:
     """List expenses with optional filters.
 
+    Uses AI-powered SQL generation to build and execute queries dynamically.
+
     Args:
         start_date: Filter from date (YYYY-MM-DD)
         end_date: Filter until date (YYYY-MM-DD)
@@ -254,61 +288,170 @@ async def list_expenses(
     Returns:
         A list of expenses matching the criteria, ordered by date (most recent first).
     """
-    # Parse dates if provided
-    parsed_start = None
-    parsed_end = None
+    from expense_manager.text_to_sql import TextToSQLOrchestrator
+
+    logger.info("[list_expenses] Tool called")
+    logger.debug(f"[list_expenses] Parameters: start_date={start_date}, end_date={end_date}, "
+                 f"category={category}, min_amount={min_amount}, max_amount={max_amount}, "
+                 f"limit={limit}, offset={offset}")
+
+    # Build natural language query from parameters
+    query_parts = ["List all expenses"]
+    filters_desc = []
 
     if start_date:
-        try:
-            parsed_start = date.fromisoformat(start_date)
-        except ValueError:
-            return {
-                "error": f"Invalid start_date format: {start_date}. Use YYYY-MM-DD."
-            }
-
+        filters_desc.append(f"from {start_date}")
     if end_date:
-        try:
-            parsed_end = date.fromisoformat(end_date)
-        except ValueError:
-            return {"error": f"Invalid end_date format: {end_date}. Use YYYY-MM-DD."}
+        filters_desc.append(f"until {end_date}")
+    if category:
+        filters_desc.append(f"in category '{category}'")
+    if min_amount is not None:
+        filters_desc.append(f"with amount >= {min_amount}")
+    if max_amount is not None:
+        filters_desc.append(f"with amount <= {max_amount}")
 
-    # Validate using Pydantic model with proper decimal precision
+    if filters_desc:
+        query_parts.append(" ".join(filters_desc))
+
+    query_parts.append(f"limit {limit} offset {offset}")
+    query_parts.append("ordered by date descending")
+
+    natural_query = " ".join(query_parts)
+    logger.info(f"[list_expenses] Natural language query: {natural_query}")
+
+    expense_ctx = _get_context(ctx)
+    logger.info(f"[list_expenses] User ID from context: {expense_ctx.user_id}")
+
     try:
-        filters = ExpenseListFilter(
-            start_date=parsed_start,
-            end_date=parsed_end,
-            category=category,
-            min_amount=_to_decimal(min_amount) if min_amount is not None else None,
-            max_amount=_to_decimal(max_amount) if max_amount is not None else None,
-            limit=limit,
-            offset=offset,
-        )
-    except ValueError as e:
-        return {"error": f"Validation error: {str(e)}"}
+        async with expense_ctx.get_session() as session:
+            logger.debug("[list_expenses] Database session created")
+            orchestrator = TextToSQLOrchestrator(
+                session=session,
+                user_id=expense_ctx.user_id,
+                max_retries=3,
+            )
+            logger.debug("[list_expenses] Orchestrator created, executing...")
+
+            lm = dspy.LM("gemini/gemini-2.5-flash", api_key=settings.google_api_key)
+            with dspy.settings.context(lm=lm):
+                result = await orchestrator.execute(question=natural_query)
+
+            logger.info(f"[list_expenses] Orchestrator result: status={result.status.value}, "
+                       f"row_count={result.row_count}, error={result.error}")
+
+            if result.status.value == "success":
+                logger.info(f"[list_expenses] SUCCESS - returning {result.row_count} expenses")
+                return {
+                    "expenses": result.data,
+                    "count": result.row_count,
+                    "limit": limit,
+                    "offset": offset,
+                    "sql_query": result.sql_query,
+                }
+            elif result.status.value == "no_results":
+                logger.info("[list_expenses] NO_RESULTS - returning empty list")
+                return {
+                    "expenses": [],
+                    "count": 0,
+                    "limit": limit,
+                    "offset": offset,
+                    "sql_query": result.sql_query,
+                }
+            else:
+                logger.error(f"[list_expenses] ERROR - {result.error}")
+                return {"error": result.error or "Query failed"}
+    except Exception as e:
+        logger.error(f"[list_expenses] Exception: {e}", exc_info=True)
+        return {"error": f"Internal error: {str(e)}"}
+
+
+@mcp.tool()
+async def search_expenses(
+    ctx: Context,
+    query: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+    category: CategoryType | str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict:
+    """Search expenses by text in description, merchant name, or notes.
+
+    Uses AI-powered SQL generation for flexible text search across fields.
+
+    Args:
+        query: Search text (searches in description, merchant_name, notes)
+        start_date: Filter from date (YYYY-MM-DD)
+        end_date: Filter until date (YYYY-MM-DD)
+        category: Filter by category name
+        limit: Maximum results to return (default: 50)
+        offset: Number of results to skip (default: 0)
+
+    Returns:
+        A list of expenses matching the search query, ordered by date (most recent first).
+
+    Examples:
+        - search_expenses(query="lunch") - find all expenses mentioning "lunch"
+        - search_expenses(query="大快活") - find expenses at Cafe de Coral
+        - search_expenses(query="coffee", category="Food & Dining") - coffee expenses in Food category
+    """
+    from expense_manager.text_to_sql import TextToSQLOrchestrator
+
+    if not query or not query.strip():
+        return {"error": "Search query cannot be empty"}
+
+    # Build natural language query
+    query_parts = [f"Search expenses containing '{query}' in description, merchant name, or notes"]
+    filters_desc = []
+
+    if start_date:
+        filters_desc.append(f"from {start_date}")
+    if end_date:
+        filters_desc.append(f"until {end_date}")
+    if category:
+        filters_desc.append(f"in category '{category}'")
+
+    if filters_desc:
+        query_parts.append(" ".join(filters_desc))
+
+    query_parts.append(f"limit {limit} offset {offset}")
+    query_parts.append("ordered by date descending")
+
+    natural_query = " ".join(query_parts)
 
     expense_ctx = _get_context(ctx)
 
     async with expense_ctx.get_session() as session:
-        repo = ExpenseRepository(session, expense_ctx.user_id)
-
-        expenses = await repo.list(
-            start_date=filters.start_date,
-            end_date=filters.end_date,
-            category=filters.category,
-            min_amount=filters.min_amount,
-            max_amount=filters.max_amount,
-            limit=filters.limit,
-            offset=filters.offset,
+        orchestrator = TextToSQLOrchestrator(
+            session=session,
+            user_id=expense_ctx.user_id,
+            max_retries=3,
         )
 
-        return {
-            "expenses": [
-                ExpenseResponse.model_validate(e).model_dump(mode="json") for e in expenses
-            ],
-            "count": len(expenses),
-            "limit": filters.limit,
-            "offset": filters.offset,
-        }
+        lm = dspy.LM("gemini/gemini-2.5-flash", api_key=settings.google_api_key)
+        with dspy.settings.context(lm=lm):
+            result = await orchestrator.execute(question=natural_query)
+
+        if result.status.value == "success":
+            return {
+                "expenses": result.data,
+                "count": result.row_count,
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "sql_query": result.sql_query,
+            }
+        elif result.status.value == "no_results":
+            return {
+                "expenses": [],
+                "count": 0,
+                "query": query,
+                "limit": limit,
+                "offset": offset,
+                "sql_query": result.sql_query,
+            }
+        else:
+            return {"error": result.error or "Search failed"}
 
 
 @mcp.tool()
@@ -317,7 +460,7 @@ async def update_expense(
     expense_id: str,
     amount: float | None = None,
     description: str | None = None,
-    category: str | None = None,
+    category: CategoryType | str | None = None,
     expense_date: str | None = None,
     currency: str | None = None,
     merchant_name: str | None = None,
@@ -332,7 +475,9 @@ async def update_expense(
         expense_id: The unique identifier of the expense to update
         amount: New expense amount
         description: New description
-        category: New category name
+        category: New category name (predefined or custom). Predefined categories:
+            Food & Dining, Transportation, Utilities, Entertainment, Shopping,
+            Healthcare, Housing & Rent, Education, Travel, Subscriptions, Other.
         expense_date: New date (YYYY-MM-DD)
         currency: New currency code
         merchant_name: New merchant name
@@ -376,6 +521,19 @@ async def update_expense(
     expense_ctx = _get_context(ctx)
 
     async with expense_ctx.get_session() as session:
+        # Validate category if being updated
+        if category is not None:
+            category_repo = CategoryRepository(session, expense_ctx.user_id)
+            if not await category_repo.exists(category):
+                predefined = PredefinedCategory.values()
+                custom_categories = await category_repo.list_active()
+                custom_names = [c.name for c in custom_categories]
+                all_categories = predefined + custom_names
+                return {
+                    "error": f"Invalid category: '{category}'. "
+                    f"Must be one of: {all_categories}"
+                }
+
         repo = ExpenseRepository(session, expense_ctx.user_id)
 
         expense = await repo.update(expense_id, **updates)
@@ -471,102 +629,102 @@ async def list_categories(
             "custom_count": len(custom_categories),
         }
 
-
-@mcp.tool()
-async def create_category(
-    ctx: Context,
-    name: str,
-    description: str | None = None,
-) -> dict:
-    """Create a new custom expense category.
-
-    Args:
-        name: Name for the new category
-        description: Optional description for the category
-
-    Returns:
-        The created category. Note: Predefined category names cannot be used.
-    """
-    # Validate using Pydantic model
-    try:
-        category_data = CategoryCreate(
-            name=name,
-            description=description,
-        )
-    except ValueError as e:
-        return {"error": f"Validation error: {str(e)}"}
-
-    # Check if name conflicts with predefined categories
-    if PredefinedCategory.is_predefined(category_data.name):
-        return {
-            "error": f"Cannot create category '{category_data.name}': "
-            "this is a predefined category name"
-        }
-
-    expense_ctx = _get_context(ctx)
-
-    async with expense_ctx.get_session() as session:
-        repo = CategoryRepository(session, expense_ctx.user_id)
-
-        # Check if custom category already exists
-        existing = await repo.get_by_name(category_data.name)
-        if existing is not None:
-            if existing.is_active:
-                return {"error": f"Category '{category_data.name}' already exists"}
-            return {
-                "error": f"Category '{category_data.name}' was previously deleted. "
-                "Contact support to reactivate it."
-            }
-
-        category = await repo.create(
-            name=category_data.name,
-            description=category_data.description,
-        )
-
-        return CategoryResponse(
-            id=category.id,
-            name=category.name,
-            description=category.description,
-            is_predefined=False,
-            is_active=category.is_active,
-        ).model_dump(mode="json")
-
-
-@mcp.tool()
-async def delete_category(
-    ctx: Context,
-    name: str,
-) -> dict:
-    """Delete a custom expense category.
-
-    Soft-deletes the category (marks as inactive). Existing expenses
-    with this category will retain their category assignment.
-
-    Args:
-        name: Name of the category to delete
-
-    Returns:
-        Success status. Note: Predefined categories cannot be deleted.
-    """
-    # Check if attempting to delete a predefined category
-    if PredefinedCategory.is_predefined(name):
-        return {
-            "error": f"Cannot delete '{name}': predefined categories cannot be deleted"
-        }
-
-    expense_ctx = _get_context(ctx)
-
-    async with expense_ctx.get_session() as session:
-        repo = CategoryRepository(session, expense_ctx.user_id)
-        deleted = await repo.delete(name)
-
-        if not deleted:
-            return {"error": f"Category not found: {name}"}
-
-        return {
-            "success": True,
-            "message": f"Category '{name}' deleted successfully",
-        }
+#
+# @mcp.tool()
+# async def create_category(
+#     ctx: Context,
+#     name: str,
+#     description: str | None = None,
+# ) -> dict:
+#     """Create a new custom expense category.
+#
+#     Args:
+#         name: Name for the new category
+#         description: Optional description for the category
+#
+#     Returns:
+#         The created category. Note: Predefined category names cannot be used.
+#     """
+#     # Validate using Pydantic model
+#     try:
+#         category_data = CategoryCreate(
+#             name=name,
+#             description=description,
+#         )
+#     except ValueError as e:
+#         return {"error": f"Validation error: {str(e)}"}
+#
+#     # Check if name conflicts with predefined categories
+#     if PredefinedCategory.is_predefined(category_data.name):
+#         return {
+#             "error": f"Cannot create category '{category_data.name}': "
+#             "this is a predefined category name"
+#         }
+#
+#     expense_ctx = _get_context(ctx)
+#
+#     async with expense_ctx.get_session() as session:
+#         repo = CategoryRepository(session, expense_ctx.user_id)
+#
+#         # Check if custom category already exists
+#         existing = await repo.get_by_name(category_data.name)
+#         if existing is not None:
+#             if existing.is_active:
+#                 return {"error": f"Category '{category_data.name}' already exists"}
+#             return {
+#                 "error": f"Category '{category_data.name}' was previously deleted. "
+#                 "Contact support to reactivate it."
+#             }
+#
+#         category = await repo.create(
+#             name=category_data.name,
+#             description=category_data.description,
+#         )
+#
+#         return CategoryResponse(
+#             id=category.id,
+#             name=category.name,
+#             description=category.description,
+#             is_predefined=False,
+#             is_active=category.is_active,
+#         ).model_dump(mode="json")
+#
+#
+# @mcp.tool()
+# async def delete_category(
+#     ctx: Context,
+#     name: str,
+# ) -> dict:
+#     """Delete a custom expense category.
+#
+#     Soft-deletes the category (marks as inactive). Existing expenses
+#     with this category will retain their category assignment.
+#
+#     Args:
+#         name: Name of the category to delete
+#
+#     Returns:
+#         Success status. Note: Predefined categories cannot be deleted.
+#     """
+#     # Check if attempting to delete a predefined category
+#     if PredefinedCategory.is_predefined(name):
+#         return {
+#             "error": f"Cannot delete '{name}': predefined categories cannot be deleted"
+#         }
+#
+#     expense_ctx = _get_context(ctx)
+#
+#     async with expense_ctx.get_session() as session:
+#         repo = CategoryRepository(session, expense_ctx.user_id)
+#         deleted = await repo.delete(name)
+#
+#         if not deleted:
+#             return {"error": f"Category not found: {name}"}
+#
+#         return {
+#             "success": True,
+#             "message": f"Category '{name}' deleted successfully",
+#         }
 
 
 # =============================================================================
@@ -583,6 +741,8 @@ async def get_expense_summary(
 ) -> dict:
     """Get expense summary statistics.
 
+    Uses AI-powered SQL generation for flexible aggregation queries.
+
     Args:
         start_date: Start date for summary (YYYY-MM-DD)
         end_date: End date for summary (YYYY-MM-DD)
@@ -592,82 +752,123 @@ async def get_expense_summary(
         Total spending, expense count, and average expense amount.
         Without date filters, returns summary for all time.
     """
-    # Parse dates if provided
-    parsed_start = None
-    parsed_end = None
-
-    if start_date:
-        try:
-            parsed_start = date.fromisoformat(start_date)
-        except ValueError:
-            return {
-                "error": f"Invalid start_date format: {start_date}. Use YYYY-MM-DD."
-            }
-
-    if end_date:
-        try:
-            parsed_end = date.fromisoformat(end_date)
-        except ValueError:
-            return {"error": f"Invalid end_date format: {end_date}. Use YYYY-MM-DD."}
+    from expense_manager.text_to_sql import TextToSQLOrchestrator
 
     # Validate group_by
     valid_group_by = ["none", "category"]
     if group_by not in valid_group_by:
         return {"error": f"group_by must be one of: {', '.join(valid_group_by)}"}
 
+    # Build natural language query
+    if group_by == "category":
+        query_parts = ["Get total amount, count, and average amount of expenses grouped by category"]
+    else:
+        query_parts = ["Get total amount, count, and average amount of all expenses"]
+
+    filters_desc = []
+    if start_date:
+        filters_desc.append(f"from {start_date}")
+    if end_date:
+        filters_desc.append(f"until {end_date}")
+
+    if filters_desc:
+        query_parts.append(" ".join(filters_desc))
+
+    if group_by == "category":
+        query_parts.append("ordered by total amount descending")
+
+    natural_query = " ".join(query_parts)
+
     expense_ctx = _get_context(ctx)
 
     async with expense_ctx.get_session() as session:
-        repo = ExpenseRepository(session, expense_ctx.user_id)
-
-        if group_by == "category":
-            # Get grouped summary
-            by_category = await repo.get_by_category(
-                start_date=parsed_start,
-                end_date=parsed_end,
-            )
-
-            # Calculate total for percentage
-            total_amount = sum(cat["total_amount"] for cat in by_category)
-            total_count = sum(cat["expense_count"] for cat in by_category)
-
-            summaries = []
-            for cat in by_category:
-                percentage = (
-                    (cat["total_amount"] / total_amount * 100)
-                    if total_amount > 0
-                    else Decimal("0")
-                )
-                summaries.append(
-                    CategorySummary(
-                        category_name=cat["category_name"],
-                        total_amount=cat["total_amount"],
-                        expense_count=cat["expense_count"],
-                        percentage=round(percentage, 2),
-                    ).model_dump(mode="json")
-                )
-
-            return GroupedExpenseSummary(
-                summaries=summaries,
-                total_amount=total_amount,
-                total_count=total_count,
-                group_by="category",
-            ).model_dump(mode="json")
-
-        # Get simple summary
-        summary = await repo.get_summary(
-            start_date=parsed_start,
-            end_date=parsed_end,
+        orchestrator = TextToSQLOrchestrator(
+            session=session,
+            user_id=expense_ctx.user_id,
+            max_retries=3,
         )
 
-        return ExpenseSummary(
-            total_amount=summary["total_amount"],
-            expense_count=summary["expense_count"],
-            average_amount=round(summary["average_amount"], 2),
-            currency=settings.default_currency,
-            start_date=parsed_start,
-            end_date=parsed_end,
-        ).model_dump(mode="json")
+        result = await orchestrator.execute(question=natural_query)
+
+        if result.status.value == "success":
+            if group_by == "category":
+                # Process grouped results
+                summaries = []
+                total_amount = Decimal("0")
+                total_count = 0
+
+                for row in result.data:
+                    # Handle different possible column names from LLM
+                    cat_name = row.get("category_name") or row.get("category") or "Unknown"
+                    amt = Decimal(str(row.get("total_amount") or row.get("total") or row.get("sum") or 0))
+                    cnt = int(row.get("expense_count") or row.get("count") or 0)
+                    total_amount += amt
+                    total_count += cnt
+                    summaries.append({
+                        "category_name": cat_name,
+                        "total_amount": float(amt),
+                        "expense_count": cnt,
+                    })
+
+                # Calculate percentages
+                for s in summaries:
+                    s["percentage"] = round(
+                        (Decimal(str(s["total_amount"])) / total_amount * 100)
+                        if total_amount > 0
+                        else Decimal("0"),
+                        2,
+                    )
+
+                return {
+                    "summaries": summaries,
+                    "total_amount": float(total_amount),
+                    "total_count": total_count,
+                    "group_by": "category",
+                    "sql_query": result.sql_query,
+                }
+            else:
+                # Process simple summary
+                if result.data:
+                    row = result.data[0]
+                    total = Decimal(str(row.get("total_amount") or row.get("total") or row.get("sum") or 0))
+                    count = int(row.get("expense_count") or row.get("count") or 0)
+                    avg = Decimal(str(row.get("average_amount") or row.get("avg") or row.get("average") or 0))
+                else:
+                    total = Decimal("0")
+                    count = 0
+                    avg = Decimal("0")
+
+                return {
+                    "total_amount": float(total),
+                    "expense_count": count,
+                    "average_amount": float(round(avg, 2)),
+                    "currency": settings.default_currency,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "sql_query": result.sql_query,
+                }
+
+        elif result.status.value == "no_results":
+            if group_by == "category":
+                return {
+                    "summaries": [],
+                    "total_amount": 0.0,
+                    "total_count": 0,
+                    "group_by": "category",
+                    "sql_query": result.sql_query,
+                }
+            else:
+                return {
+                    "total_amount": 0.0,
+                    "expense_count": 0,
+                    "average_amount": 0.0,
+                    "currency": settings.default_currency,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "sql_query": result.sql_query,
+                }
+        else:
+            return {"error": result.error or "Summary query failed"}
 
 
 @mcp.tool()
@@ -677,6 +878,8 @@ async def get_monthly_trend(
 ) -> dict:
     """Get monthly spending trend.
 
+    Uses AI-powered SQL generation for flexible trend analysis.
+
     Args:
         months: Number of months to include (default: 6)
 
@@ -684,29 +887,57 @@ async def get_monthly_trend(
         Total spending and expense count for each month.
         Useful for understanding spending patterns over time.
     """
+    from expense_manager.text_to_sql import TextToSQLOrchestrator
+
     if months < 1 or months > 24:
         return {"error": "months must be between 1 and 24"}
+
+    # Build natural language query
+    natural_query = (
+        f"Get monthly spending totals for the last {months} months "
+        "showing year, month, total amount, and expense count "
+        "grouped by year and month, ordered by year descending then month descending"
+    )
 
     expense_ctx = _get_context(ctx)
 
     async with expense_ctx.get_session() as session:
-        repo = ExpenseRepository(session, expense_ctx.user_id)
-        trend_data = await repo.get_monthly_trend(months=months)
+        orchestrator = TextToSQLOrchestrator(
+            session=session,
+            user_id=expense_ctx.user_id,
+            max_retries=3,
+        )
 
-        trends = [
-            MonthlyTrend(
-                year=item["year"],
-                month=item["month"],
-                total_amount=item["total_amount"],
-                expense_count=item["expense_count"],
-            ).model_dump(mode="json")
-            for item in trend_data
-        ]
+        result = await orchestrator.execute(question=natural_query)
 
-        return MonthlyTrendResponse(
-            trends=trends,
-            currency=settings.default_currency,
-        ).model_dump(mode="json")
+        if result.status.value == "success":
+            trends = []
+            for row in result.data:
+                year = int(row.get("year") or 0)
+                month = int(row.get("month") or 0)
+                total = float(row.get("total_amount") or row.get("total") or row.get("sum") or 0)
+                count = int(row.get("expense_count") or row.get("count") or 0)
+                trends.append({
+                    "year": year,
+                    "month": month,
+                    "total_amount": total,
+                    "expense_count": count,
+                })
+
+            return {
+                "trends": trends,
+                "currency": settings.default_currency,
+                "sql_query": result.sql_query,
+            }
+
+        elif result.status.value == "no_results":
+            return {
+                "trends": [],
+                "currency": settings.default_currency,
+                "sql_query": result.sql_query,
+            }
+        else:
+            return {"error": result.error or "Monthly trend query failed"}
 
 
 @mcp.tool()
@@ -718,6 +949,8 @@ async def get_top_categories(
 ) -> dict:
     """Get top spending categories.
 
+    Uses AI-powered SQL generation for flexible category ranking.
+
     Args:
         start_date: Start date for analysis (YYYY-MM-DD)
         end_date: End date for analysis (YYYY-MM-DD)
@@ -727,66 +960,178 @@ async def get_top_categories(
         Categories with the highest total spending, ordered by amount.
         Without date filters, analyzes all time spending.
     """
-    # Parse dates if provided
-    parsed_start = None
-    parsed_end = None
-
-    if start_date:
-        try:
-            parsed_start = date.fromisoformat(start_date)
-        except ValueError:
-            return {
-                "error": f"Invalid start_date format: {start_date}. Use YYYY-MM-DD."
-            }
-
-    if end_date:
-        try:
-            parsed_end = date.fromisoformat(end_date)
-        except ValueError:
-            return {"error": f"Invalid end_date format: {end_date}. Use YYYY-MM-DD."}
+    from expense_manager.text_to_sql import TextToSQLOrchestrator
 
     if limit < 1 or limit > 20:
         return {"error": "limit must be between 1 and 20"}
 
+    # Build natural language query
+    query_parts = [f"Get top {limit} categories by total spending amount"]
+    query_parts.append("showing category name, total amount, and expense count")
+
+    filters_desc = []
+    if start_date:
+        filters_desc.append(f"from {start_date}")
+    if end_date:
+        filters_desc.append(f"until {end_date}")
+
+    if filters_desc:
+        query_parts.append(" ".join(filters_desc))
+
+    query_parts.append("ordered by total amount descending")
+
+    natural_query = " ".join(query_parts)
+
     expense_ctx = _get_context(ctx)
 
     async with expense_ctx.get_session() as session:
-        repo = ExpenseRepository(session, expense_ctx.user_id)
-
-        by_category = await repo.get_by_category(
-            start_date=parsed_start,
-            end_date=parsed_end,
+        orchestrator = TextToSQLOrchestrator(
+            session=session,
+            user_id=expense_ctx.user_id,
+            max_retries=3,
         )
 
-        # Calculate total for percentage
-        total_amount = sum(cat["total_amount"] for cat in by_category)
+        lm = dspy.LM("gemini/gemini-2.5-flash-lite", api_key=settings.google_api_key)
+        with dspy.settings.context(lm=lm):
+            result = await orchestrator.execute(question=natural_query)
 
-        # Get top N categories
-        top_cats = by_category[:limit]
 
-        categories = []
-        for cat in top_cats:
-            percentage = (
-                (cat["total_amount"] / total_amount * 100)
-                if total_amount > 0
-                else Decimal("0")
-            )
-            categories.append(
-                TopCategory(
-                    category_name=cat["category_name"],
-                    total_amount=cat["total_amount"],
-                    expense_count=cat["expense_count"],
-                    percentage=round(percentage, 2),
-                ).model_dump(mode="json")
-            )
+        if result.status.value == "success":
+            # Process results and calculate percentages
+            categories = []
+            total_amount = Decimal("0")
 
-        return TopCategoriesResponse(
-            categories=categories,
-            total_amount=total_amount,
-            currency=settings.default_currency,
-            start_date=parsed_start,
-            end_date=parsed_end,
-        ).model_dump(mode="json")
+            # First pass: calculate total
+            for row in result.data:
+                amt = Decimal(str(row.get("total_amount") or row.get("total") or row.get("sum") or 0))
+                total_amount += amt
+
+            # Second pass: build categories with percentages
+            for row in result.data:
+                cat_name = row.get("category_name") or row.get("category") or "Unknown"
+                amt = Decimal(str(row.get("total_amount") or row.get("total") or row.get("sum") or 0))
+                cnt = int(row.get("expense_count") or row.get("count") or 0)
+                percentage = (
+                    round((amt / total_amount * 100), 2)
+                    if total_amount > 0
+                    else Decimal("0")
+                )
+                categories.append({
+                    "category_name": cat_name,
+                    "total_amount": float(amt),
+                    "expense_count": cnt,
+                    "percentage": float(percentage),
+                })
+
+            return {
+                "categories": categories,
+                "total_amount": float(total_amount),
+                "currency": settings.default_currency,
+                "start_date": start_date,
+                "end_date": end_date,
+                "sql_query": result.sql_query,
+            }
+
+        elif result.status.value == "no_results":
+            return {
+                "categories": [],
+                "total_amount": 0.0,
+                "currency": settings.default_currency,
+                "start_date": start_date,
+                "end_date": end_date,
+                "sql_query": result.sql_query,
+            }
+        else:
+            return {"error": result.error or "Top categories query failed"}
+
+
+# =============================================================================
+# Natural Language Query Tool (Text-to-SQL)
+# =============================================================================
+
+#
+# @mcp.tool()
+# async def query_expenses_natural_language(
+#     ctx: Context,
+#     question: str,
+#     additional_context: str | None = None,
+# ) -> dict:
+#     """Query expenses using natural language.
+#
+#     Converts a natural language question into SQL and executes it against
+#     the expense database. Supports complex queries like aggregations,
+#     filtering, and comparisons.
+#
+#     Args:
+#         question: Natural language question about expenses.
+#             Examples:
+#             - "How much did I spend on food last month?"
+#             - "What are my top 5 expenses this year?"
+#             - "Show me all transportation expenses over $100"
+#             - "Compare my spending by category for January vs February"
+#         additional_context: Optional clarification or additional context
+#             for the query (use when follow-up is needed)
+#
+#     Returns:
+#         Query results with data, SQL used, and explanation.
+#         May return a clarification request if the question is ambiguous.
+#
+#     Note:
+#         This tool uses AI to generate SQL, so complex or unusual queries
+#         may require rephrasing. The SQL is always filtered by user_id
+#         for security.
+#     """
+#     from expense_manager.text_to_sql import TextToSQLOrchestrator
+#
+#     if not question or not question.strip():
+#         return {"error": "Question cannot be empty"}
+#
+#     expense_ctx = _get_context(ctx)
+#
+#     async with expense_ctx.get_session() as session:
+#
+#         orchestrator = TextToSQLOrchestrator(
+#             session=session,
+#             user_id=expense_ctx.user_id,
+#             max_retries=3,
+#             check_ambiguity=False,  # Can enable for more careful queries
+#         )
+#
+#         lm = dspy.LM("gemini/gemini-2.5-flash", api_key=settings.google_api_key)
+#         with dspy.settings.context(lm=lm):
+#             result = await orchestrator.execute(
+#                 question=question.strip(),
+#                 additional_context=additional_context,
+#             )
+#
+#         # Build response based on pipeline result
+#         response: dict = {
+#             "status": result.status.value,
+#         }
+#
+#         if result.status.value == "success":
+#             response["data"] = result.data
+#             response["row_count"] = result.row_count
+#             response["sql_query"] = result.sql_query
+#             response["explanation"] = result.explanation
+#
+#         elif result.status.value == "needs_clarification":
+#             response["needs_clarification"] = True
+#             response["clarification_question"] = result.clarification_question
+#             if result.explanation:
+#                 response["context"] = result.explanation
+#
+#         elif result.status.value == "no_results":
+#             response["message"] = "No expenses found matching your query"
+#             response["sql_query"] = result.sql_query
+#             response["suggestion"] = "Try broadening your search criteria or checking if you have expenses in the specified date range"
+#
+#         else:  # error
+#             response["error"] = result.error
+#             if result.sql_query:
+#                 response["sql_query"] = result.sql_query
+#
+#         return response
 
 
 if __name__ == "__main__":

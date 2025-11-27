@@ -16,7 +16,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, update
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Import ORM models from the main app to avoid duplication
@@ -144,6 +144,62 @@ class ExpenseRepository:
         if max_amount is not None:
             query = query.where(ExpenseORM.amount <= max_amount)
 
+        query = (
+            query.order_by(ExpenseORM.expense_date.desc(), ExpenseORM.created_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def search(
+        self,
+        query_text: str,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        category: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[ExpenseORM]:
+        """Search expenses by text in description, merchant, and notes.
+
+        Performs case-insensitive search across multiple text fields.
+
+        Args:
+            query_text: Text to search for (searches description, merchant_name, notes)
+            start_date: Filter expenses on or after this date
+            end_date: Filter expenses on or before this date
+            category: Filter by category name
+            limit: Maximum number of results
+            offset: Number of results to skip
+
+        Returns:
+            List of matching expenses ordered by date (most recent first)
+        """
+        # Build base query with user filter
+        query = select(ExpenseORM).where(ExpenseORM.user_id == self.user_id)
+
+        # Add text search across multiple fields (case-insensitive)
+        search_pattern = f"%{query_text}%"
+
+        query = query.where(
+            or_(
+                ExpenseORM.description.ilike(search_pattern),
+                ExpenseORM.merchant_name.ilike(search_pattern),
+                ExpenseORM.notes.ilike(search_pattern),
+            )
+        )
+
+        # Apply additional filters
+        if start_date is not None:
+            query = query.where(ExpenseORM.expense_date >= start_date)
+        if end_date is not None:
+            query = query.where(ExpenseORM.expense_date <= end_date)
+        if category is not None:
+            query = query.where(ExpenseORM.category_name == category)
+
+        # Order and paginate
         query = (
             query.order_by(ExpenseORM.expense_date.desc(), ExpenseORM.created_at.desc())
             .limit(limit)

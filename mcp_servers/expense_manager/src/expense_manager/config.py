@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     # Default currency for new expenses
     default_currency: str = "HKD"
 
+    google_api_key: str = ""
+
     # Pagination defaults
     default_page_limit: int = 50
     max_page_limit: int = 200
