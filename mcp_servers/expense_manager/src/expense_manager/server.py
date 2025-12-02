@@ -59,6 +59,9 @@ from expense_manager.models import (
 from expense_manager.repository import CategoryRepository, ExpenseRepository
 
 
+lm = dspy.LM("gemini/gemini-2.5-flash", api_key=settings.google_api_key)
+dspy.settings.configure(lm=lm)
+
 @asynccontextmanager
 async def app_lifespan(server: FastMCP) -> AsyncIterator[ExpenseContext]:
     """Manage application lifecycle with database connection.
@@ -984,15 +987,14 @@ async def get_top_categories(
 
     expense_ctx = _get_context(ctx)
 
-    async with expense_ctx.get_session() as session:
-        orchestrator = TextToSQLOrchestrator(
-            session=session,
-            user_id=expense_ctx.user_id,
-            max_retries=3,
-        )
-
-        lm = dspy.LM("gemini/gemini-2.5-flash-lite", api_key=settings.google_api_key)
-        with dspy.settings.context(lm=lm):
+    lm = dspy.LM("gemini/gemini-2.5-flash-lite", api_key=settings.google_api_key)
+    with dspy.settings.context(lm=lm):
+        async with expense_ctx.get_session() as session:
+            orchestrator = TextToSQLOrchestrator(
+                    session=session,
+                    user_id=expense_ctx.user_id,
+                    max_retries=3,
+                )
             result = await orchestrator.execute(question=natural_query)
 
 

@@ -1,0 +1,353 @@
+{
+  "info": {
+    "_postman_id": "chatbot-api-collection",
+    "name": "Chatbot API",
+    "description": "API collection for the Chatbot application with DSPy, mem0, and MCP integrations",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    },
+    {
+      "key": "user_id",
+      "value": "test_user_123",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "internal_api_secret",
+      "value": "your_internal_secret_here",
+      "type": "string"
+    },
+    {
+      "key": "whatsapp_phone",
+      "value": "+1234567890",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Check if the API server is healthy and running"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Send Chat Message",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var jsonData = pm.response.json();",
+                  "    if (jsonData.session_id) {",
+                  "        pm.collectionVariables.set('session_id', jsonData.session_id);",
+                  "    }",
+                  "    if (jsonData.user_id) {",
+                  "        pm.collectionVariables.set('user_id', jsonData.user_id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hello! What can you help me with?\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Send a chat message to the AI agent. The agent will respond using DSPy ReAct with memory and MCP tools."
+          },
+          "response": []
+        },
+        {
+          "name": "Send Chat with Image URL",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"What's in this image?\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\",\n  \"image_url\": \"https://example.com/image.jpg\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Send a chat message with an image URL for multimodal analysis"
+          },
+          "response": []
+        },
+        {
+          "name": "Send Chat with Authenticated Image",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Analyze this image\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\",\n  \"image_url\": \"https://example.com/protected-image.jpg\",\n  \"access_token\": \"your_bearer_token_here\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Send a chat message with an image that requires authentication (Bearer token)"
+          },
+          "response": []
+        },
+        {
+          "name": "Add Expense (via Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Add an expense of $25 for lunch at Subway today\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Use the chat to add an expense (will delegate to expense_manager MCP server)"
+          },
+          "response": []
+        },
+        {
+          "name": "List Expenses (via Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Show me my expenses from this week\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Use the chat to list expenses (will delegate to expense_manager MCP server)"
+          },
+          "response": []
+        },
+        {
+          "name": "Create Note (via Chat)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Create a note titled 'Meeting Notes' with the content: Discussed Q4 roadmap, action items include reviewing budget and scheduling follow-ups.\",\n  \"user_id\": \"{{user_id}}\",\n  \"session_id\": \"{{session_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "chat", ""]
+            },
+            "description": "Use the chat to create a note (will delegate to note_manager MCP server)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "OAuth - Google",
+      "item": [
+        {
+          "name": "Initiate Google OAuth",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/oauth/google/authorize?user_id={{user_id}}&whatsapp_phone={{whatsapp_phone}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "oauth", "google", "authorize"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{user_id}}",
+                  "description": "User ID (WhatsApp phone number)"
+                },
+                {
+                  "key": "whatsapp_phone",
+                  "value": "{{whatsapp_phone}}",
+                  "description": "WhatsApp phone number for callback"
+                }
+              ]
+            },
+            "description": "Generate Google OAuth authorization URL. Redirect the user to the returned URL to initiate OAuth flow."
+          },
+          "response": []
+        },
+        {
+          "name": "Check OAuth Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/oauth/google/status?user_id={{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "oauth", "google", "status"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{user_id}}",
+                  "description": "User ID to check"
+                }
+              ]
+            },
+            "description": "Check if a user has linked their Google account"
+          },
+          "response": []
+        },
+        {
+          "name": "Revoke OAuth Tokens",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"user_id\": \"{{user_id}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/oauth/google/revoke",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "oauth", "google", "revoke"]
+            },
+            "description": "Revoke a user's Google OAuth tokens (unlink Google account)"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Internal API",
+      "description": "Internal endpoints for MCP servers. Requires X-Internal-Secret header.",
+      "item": [
+        {
+          "name": "Get Google Token (Internal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Internal-Secret",
+                "value": "{{internal_api_secret}}",
+                "description": "Internal API secret for MCP server authentication"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/internal/oauth/google/token?user_id={{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "internal", "oauth", "google", "token"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{user_id}}",
+                  "description": "User ID to get token for"
+                }
+              ]
+            },
+            "description": "Get a valid Google OAuth access token for a user. Used by MCP servers to make Google API calls. Automatically refreshes expired tokens."
+          },
+          "response": []
+        },
+        {
+          "name": "Check Google Status (Internal)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Internal-Secret",
+                "value": "{{internal_api_secret}}",
+                "description": "Internal API secret for MCP server authentication"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/internal/oauth/google/status?user_id={{user_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["api", "v1", "internal", "oauth", "google", "status"],
+              "query": [
+                {
+                  "key": "user_id",
+                  "value": "{{user_id}}",
+                  "description": "User ID to check"
+                }
+              ]
+            },
+            "description": "Check if a user has a valid Google OAuth token. Used by MCP servers before making Google API calls."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

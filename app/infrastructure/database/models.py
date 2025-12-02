@@ -232,3 +232,85 @@ class NoteORM(Base):
 
     def __repr__(self) -> str:
         return f"<NoteORM(id={self.id!r}, title={self.title!r})>"
+
+
+# =============================================================================
+# Google OAuth Models
+# =============================================================================
+
+
+class GoogleOAuthTokenORM(Base):
+    """SQLAlchemy model for Google OAuth tokens.
+
+    Stores encrypted OAuth tokens for Google Calendar and Gmail access.
+    One token per user_id (WhatsApp phone number). Linking a new account
+    replaces the existing tokens.
+
+    Security:
+    - access_token and refresh_token are encrypted at rest using Fernet
+    - Tokens are decrypted only when needed for API calls
+    - Encryption key stored in GOOGLE_OAUTH_ENCRYPTION_KEY env var
+    """
+
+    __tablename__ = "google_oauth_tokens"
+
+    id: Mapped[str] = mapped_column(
+        String(50), primary_key=True, default=generate_uuid
+    )
+    user_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, unique=True, index=True
+    )
+    # Encrypted tokens (Fernet)
+    access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    refresh_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    # Token metadata (not sensitive)
+    token_expiry: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+    scopes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    # Google account info (for display purposes)
+    google_email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    google_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, onupdate=utc_now, nullable=False
+    )
+    # Revocation tracking
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    def __repr__(self) -> str:
+        return f"<GoogleOAuthTokenORM(id={self.id!r}, user_id={self.user_id!r}, google_email={self.google_email!r})>"
+
+
+class OAuthStateORM(Base):
+    """Temporary storage for OAuth state tokens (CSRF protection).
+
+    These records are short-lived and cleaned up after OAuth completion
+    or expiration (10 minutes).
+    """
+
+    __tablename__ = "oauth_states"
+
+    id: Mapped[str] = mapped_column(
+        String(50), primary_key=True, default=generate_uuid
+    )
+    state: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True, index=True
+    )
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    whatsapp_phone: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), default=utc_now, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<OAuthStateORM(id={self.id!r}, user_id={self.user_id!r})>"

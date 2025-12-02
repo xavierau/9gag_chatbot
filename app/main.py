@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import FastAPI
 
-from app.api.routes import chat, health
+from app.api.routes import chat, health, internal, oauth
 from app.core.config import settings
 from app.infrastructure.llm.dspy_config import configure_dspy
 
@@ -39,3 +39,5 @@ app = FastAPI(
 
 app.include_router(health.router)
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(oauth.router, prefix="/api/v1/oauth", tags=["oauth"])
+app.include_router(internal.router, prefix="/api/v1/internal", tags=["internal"])

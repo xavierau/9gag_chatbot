@@ -65,18 +65,16 @@ async def chat(
     # Convert image_url to dspy.Image if provided
     image: dspy.Image | None = None
     if request.image_url:
-        if request.access_token:
-            # Download image with Bearer token authorization
+        headers = request.get_image_headers()
+        if headers:
+            # Download image with custom headers
             async with httpx.AsyncClient() as client:
-                response = await client.get(
-                    request.image_url,
-                    headers={"Authorization": f"Bearer {request.access_token}"},
-                )
+                response = await client.get(request.image_url, headers=headers)
                 response.raise_for_status()
                 # Load image bytes directly into PIL
                 pil_image = PILImage.open(io.BytesIO(response.content))
                 image = dspy.Image.from_PIL(pil_image)
-                logger.debug("Image downloaded with auth from: %s", request.image_url)
+                logger.debug("Image downloaded with headers from: %s", request.image_url)
         else:
             image = dspy.Image.from_url(request.image_url)
             logger.debug("Image loaded from URL: %s", request.image_url)
