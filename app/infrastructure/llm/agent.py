@@ -39,6 +39,7 @@ from app.infrastructure.llm.tools import (
 )
 from app.infrastructure.mcp.client import (
     EXPENSE_MANAGER_CONFIG,
+    NOTE_MANAGER_CONFIG,
     MCPServerConfig,
     create_mcp_tools_for_user,
     get_mcp_session,
@@ -117,6 +118,7 @@ class ChatBotAgent(dspy.Module):
         # Default MCP servers if none provided
         self.mcp_configs = mcp_configs if mcp_configs is not None else [
             EXPENSE_MANAGER_CONFIG,
+            NOTE_MANAGER_CONFIG,
         ]
 
         # Core tools available to all conversations
@@ -165,8 +167,7 @@ class ChatBotAgent(dspy.Module):
             List of DSPy tools from all configured MCP servers.
         """
         mcp_tools: list[dspy.Tool] = []
-        sessions = []
-        exit_stacks = []
+        active_context_managers: list = []
 
         if not self.enable_mcp or not self.mcp_configs:
             yield mcp_tools
@@ -179,8 +180,8 @@ class ChatBotAgent(dspy.Module):
                     # Create session context
                     session_cm = get_mcp_session(config, user_id)
                     session = await session_cm.__aenter__()
-                    sessions.append(session)
-                    exit_stacks.append(session_cm)
+                    # Only track context managers that successfully entered
+                    active_context_managers.append(session_cm)
 
                     # Get tools from this session
                     tools = await create_mcp_tools_for_user(config, user_id, session)
@@ -194,12 +195,15 @@ class ChatBotAgent(dspy.Module):
             yield mcp_tools
 
         finally:
-            # Close all sessions
-            for exit_stack in exit_stacks:
+            # Close all successfully opened sessions (in reverse order)
+            for cm in reversed(active_context_managers):
                 try:
-                    await exit_stack.__aexit__(None, None, None)
+                    await cm.__aexit__(None, None, None)
+                except asyncio.CancelledError:
+                    # Ignore cancellation errors during cleanup
+                    pass
                 except Exception as e:
-                    logger.warning(f"Error closing MCP session: {e}")
+                    logger.debug(f"Error closing MCP session: {e}")
 
     def _format_conversation_history(
         self, history: list[dict[str, str]], max_messages: int = 10

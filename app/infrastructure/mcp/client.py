@@ -17,6 +17,7 @@ Usage:
     ```
 """
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -71,6 +72,12 @@ EXPENSE_MANAGER_CONFIG = MCPServerConfig(
     name="Expense Manager",
     server_dir="expense_manager",
     server_script="src/expense_manager/server.py",
+)
+
+NOTE_MANAGER_CONFIG = MCPServerConfig(
+    name="Note Manager",
+    server_dir="note_manager",
+    server_script="src/note_manager/server.py",
 )
 
 
@@ -134,6 +141,9 @@ async def get_mcp_session(
                 await session.initialize()
                 logger.debug(f"Connected to MCP server: {config.name}")
                 yield session
+    except asyncio.CancelledError:
+        # Re-raise cancellation without wrapping
+        raise
     except Exception as e:
         logger.error(f"Failed to connect to MCP server {config.name}: {e}")
         raise RuntimeError(f"MCP server connection failed: {config.name}") from e
