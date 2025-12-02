@@ -2,12 +2,17 @@
 
 This module defines the tools available to the ReAct agent,
 following the DSPy Tool pattern with clear docstrings and type hints.
+
+Includes:
+- Memory tools: search, store, list memories
+- Utility tools: get_current_time, calculate
+- MCP Orchestration tools: get_available_mcp_servers, delegate_to_subagent
 """
 
 import asyncio
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from app.infrastructure.memory.mem0_service import Mem0MemoryService
@@ -270,3 +275,102 @@ async def async_store_memory(
     loop = asyncio.get_event_loop()
     store_func = create_memory_store_tool(memory_service, user_id)
     return await loop.run_in_executor(None, store_func, content, category)
+
+
+# =============================================================================
+# MCP Orchestration Tools
+# =============================================================================
+# These tools enable the hierarchical agent architecture where the main
+# ChatBotAgent delegates tasks to specialized MCPSubAgents.
+
+
+def get_available_mcp_servers() -> str:
+    """Get a list of available MCP servers and their capabilities.
+
+    Use this tool to discover what specialized capabilities are available
+    before delegating tasks. Each server handles a specific domain.
+
+    Returns:
+        A JSON-formatted list of available servers with their descriptions
+        and capabilities.
+    """
+    from app.infrastructure.mcp.registry import get_servers_summary
+
+    return get_servers_summary()
+
+
+def create_delegate_to_subagent_tool(user_id: str) -> Callable:
+    """Factory to create a delegate_to_subagent tool bound to a specific user.
+
+    The delegate tool spawns an MCPSubAgent to handle specialized tasks
+    using a specific MCP server's tools.
+
+    Args:
+        user_id: The user ID for the MCP operations.
+
+    Returns:
+        An async callable tool function for delegating tasks.
+    """
+
+    async def delegate_to_subagent(server_name: str, task: str, context: str = "") -> str:
+        """Delegate a task to a specialized sub-agent for execution.
+
+        Use this tool when you need to perform operations that require
+        a specific MCP server's capabilities (e.g., expense tracking,
+        note management).
+
+        IMPORTANT: Before using this tool, call get_available_mcp_servers()
+        to see what servers are available and their capabilities.
+
+        Args:
+            server_name: Name of the MCP server to use (e.g., 'expense_manager',
+                        'note_manager').
+            task: Clear, specific description of what needs to be done.
+                  Be detailed - the sub-agent only sees this task description.
+            context: Optional additional context from the conversation that
+                    may help the sub-agent complete the task.
+
+        Returns:
+            The result from the sub-agent, or an error message if delegation failed.
+
+        Examples:
+            - delegate_to_subagent("expense_manager", "Create an expense for $25 lunch at Subway today")
+            - delegate_to_subagent("note_manager", "Create a note titled 'Meeting Notes' with content about the Q4 planning discussion")
+        """
+        from app.infrastructure.llm.subagent import MCPSubAgent
+        from app.infrastructure.mcp.registry import get_server_metadata
+
+        # Validate server name
+        metadata = get_server_metadata(server_name)
+        if metadata is None:
+            from app.infrastructure.mcp.registry import get_all_server_names
+
+            available = ", ".join(get_all_server_names())
+            return f"Error: Unknown server '{server_name}'. Available servers: {available}"
+
+        # Create and execute sub-agent
+        try:
+            subagent = MCPSubAgent(
+                mcp_config=metadata.config,
+                user_id=user_id,
+                max_iters=4,
+            )
+
+            result = await subagent.execute(task=task, context=context)
+
+            if result.success:
+                logger.info(
+                    f"Delegation to {server_name} succeeded in {result.duration_ms:.0f}ms"
+                )
+                return result.result or "Task completed successfully."
+            else:
+                logger.warning(
+                    f"Delegation to {server_name} failed: {result.error}"
+                )
+                return f"Error from {server_name}: {result.error}"
+
+        except Exception as e:
+            logger.error(f"Delegation to {server_name} raised exception: {e}")
+            return f"Error delegating to {server_name}: {str(e)}"
+
+    return delegate_to_subagent

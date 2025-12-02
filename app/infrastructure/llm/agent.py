@@ -28,13 +28,16 @@ from typing import TYPE_CHECKING
 
 import dspy
 
+from app.infrastructure.llm.dspy_config import get_tracer
 from app.infrastructure.llm.signatures import ChatBotSignature
 from app.infrastructure.llm.tools import (
     calculate,
+    create_delegate_to_subagent_tool,
     create_memory_list_tool,
     create_memory_search_by_category_tool,
     create_memory_search_tool,
     create_memory_store_tool,
+    get_available_mcp_servers,
     get_current_time,
 )
 from app.infrastructure.mcp.client import (
@@ -80,16 +83,27 @@ class ChatBotAgent(dspy.Module):
     decide when to use tools, and generate contextually relevant responses.
 
     MCP Integration:
-        The agent can connect to MCP servers to extend its capabilities.
-        MCP tools are dynamically loaded and converted to DSPy tools.
+        The agent supports two modes for MCP integration:
+
+        1. Hierarchical Mode (use_hierarchical_mcp=True, default):
+           - Agent has only 8 tools (base + memory + meta-tools)
+           - Uses get_available_mcp_servers() to discover capabilities
+           - Uses delegate_to_subagent() to spawn specialized MCPSubAgents
+           - Reduces token usage and improves tool selection accuracy
+
+        2. Flat Mode (use_hierarchical_mcp=False):
+           - Agent loads all MCP tools directly (30+ tools)
+           - Legacy behavior, kept for comparison/fallback
+
         User ID is passed securely via environment variables, never as
         tool parameters, preventing prompt injection attacks.
 
     Attributes:
         memory_service: The MemoryService for context retrieval and storage.
         max_iters: Maximum iterations for the ReAct reasoning loop.
-        mcp_configs: List of MCP server configurations to connect to.
+        mcp_configs: List of MCP server configurations (used in flat mode).
         enable_mcp: Whether MCP tools are enabled (default: True).
+        use_hierarchical_mcp: Use hierarchical delegation (default: True).
     """
 
     def __init__(
@@ -99,6 +113,7 @@ class ChatBotAgent(dspy.Module):
         include_reasoning_trace: bool = False,
         mcp_configs: list[MCPServerConfig] | None = None,
         enable_mcp: bool = True,
+        use_hierarchical_mcp: bool = True,
     ):
         """Initialize the ChatBotAgent.
 
@@ -106,16 +121,21 @@ class ChatBotAgent(dspy.Module):
             memory_service: MemoryService for memory operations.
             max_iters: Maximum ReAct iterations (default: 6).
             include_reasoning_trace: Whether to include the reasoning trace in output.
-            mcp_configs: List of MCP server configs (default: expense_manager).
+            mcp_configs: List of MCP server configs (used in flat mode).
             enable_mcp: Whether to enable MCP tools (default: True).
+            use_hierarchical_mcp: Use hierarchical delegation instead of loading
+                all MCP tools directly (default: True). When True, the agent uses
+                meta-tools (get_available_mcp_servers, delegate_to_subagent) to
+                spawn specialized sub-agents on demand.
         """
         super().__init__()
         self.memory_service = memory_service
         self.max_iters = max_iters
         self.include_reasoning_trace = include_reasoning_trace
         self.enable_mcp = enable_mcp
+        self.use_hierarchical_mcp = use_hierarchical_mcp
 
-        # Default MCP servers if none provided
+        # Default MCP servers if none provided (used in flat mode)
         self.mcp_configs = mcp_configs if mcp_configs is not None else [
             EXPENSE_MANAGER_CONFIG,
             NOTE_MANAGER_CONFIG,
@@ -132,24 +152,31 @@ class ChatBotAgent(dspy.Module):
         self._signature = ChatBotSignature
 
     def _create_tools_for_user(self, user_id: str) -> list:
-        """Create a tool set bound to a specific user (sync version).
+        """Create a tool set bound to a specific user.
 
-        This creates only the synchronous tools (memory + base).
-        For MCP tools, use _create_tools_for_user_async().
+        In hierarchical mode, this includes meta-tools for MCP orchestration.
+        In flat mode, this creates only base + memory tools (MCP tools added separately).
 
         Args:
             user_id: The user ID for memory operations.
 
         Returns:
-            List of tools including base tools and user-specific memory tools.
+            List of tools including base tools, memory tools, and optionally meta-tools.
         """
-        return [
+        tools = [
             *self._base_tools,
             create_memory_search_tool(self.memory_service, user_id),
             create_memory_store_tool(self.memory_service, user_id),
             create_memory_list_tool(self.memory_service, user_id),
             create_memory_search_by_category_tool(self.memory_service, user_id),
         ]
+
+        # In hierarchical mode, add meta-tools for MCP orchestration
+        if self.use_hierarchical_mcp and self.enable_mcp:
+            tools.append(get_available_mcp_servers)
+            tools.append(create_delegate_to_subagent_tool(user_id))
+
+        return tools
 
     @asynccontextmanager
     async def _mcp_tools_context(
@@ -384,13 +411,20 @@ class ChatBotAgent(dspy.Module):
         non-blocking operations and better scalability.
 
         MCP Integration:
-            When enable_mcp=True, this method connects to configured MCP servers
-            and adds their tools to the ReAct agent. The user_id is passed to
-            MCP servers via environment variables (never as tool parameters)
-            to prevent prompt injection attacks.
+            The agent supports two modes:
 
-            IMPORTANT: MCP sessions are kept open during the entire ReAct
-            execution because MCP tools hold references to their sessions.
+            1. Hierarchical Mode (use_hierarchical_mcp=True, default):
+               - Agent uses meta-tools (get_available_mcp_servers, delegate_to_subagent)
+               - MCP connections are established on-demand by sub-agents
+               - Only 8 tools in context (better accuracy, lower token usage)
+
+            2. Flat Mode (use_hierarchical_mcp=False):
+               - All MCP tools loaded directly (30+ tools)
+               - MCP sessions kept open during entire ReAct execution
+               - Legacy behavior for comparison
+
+            User ID is passed securely via environment variables, never as
+            tool parameters, preventing prompt injection attacks.
 
         Args:
             user_message: The user's current message.
@@ -410,15 +444,152 @@ class ChatBotAgent(dspy.Module):
             user_id, user_message
         )
 
-        # Create base tools (memory + utility)
+        # Create tools for user (includes meta-tools in hierarchical mode)
         tools = self._create_tools_for_user(user_id)
 
+        # Choose execution path based on mode
+        if self.use_hierarchical_mcp:
+            # Hierarchical mode: use meta-tools, no direct MCP loading
+            return await self._execute_hierarchical(
+                tools=tools,
+                user_message=user_message,
+                history_str=history_str,
+                memory_context=memory_context,
+                user_id=user_id,
+                image=image,
+            )
+        else:
+            # Flat mode: load all MCP tools directly (legacy behavior)
+            return await self._execute_flat(
+                tools=tools,
+                user_message=user_message,
+                history_str=history_str,
+                memory_context=memory_context,
+                user_id=user_id,
+                image=image,
+            )
+
+    async def _execute_hierarchical(
+        self,
+        tools: list,
+        user_message: str,
+        history_str: str,
+        memory_context: str,
+        user_id: str,
+        image: dspy.Image | None = None,
+    ) -> AgentResponse:
+        """Execute ReAct with hierarchical MCP orchestration.
+
+        In this mode, the agent has meta-tools for discovering and delegating
+        to MCP sub-agents. No MCP tools are loaded directly.
+
+        Args:
+            tools: Pre-built tool list (base + memory + meta-tools)
+            user_message: The user's message
+            history_str: Formatted conversation history
+            memory_context: Retrieved memory context
+            user_id: User identifier
+            image: Optional image input
+
+        Returns:
+            AgentResponse with the generated response
+        """
+        logger.debug(
+            f"Hierarchical mode: {len(tools)} tools for user {user_id}"
+        )
+        logger.debug(f"Tools: {[getattr(t, '__name__', str(t)) for t in tools]}")
+
+        # Create ReAct module with meta-tools
+        react = dspy.ReAct(
+            signature=self._signature,
+            tools=tools,
+            max_iters=self.max_iters,
+        )
+
+        # Get tracer for custom spans
+        tracer = get_tracer()
+
+        try:
+            call_kwargs = {
+                "user_message": user_message,
+                "conversation_history": history_str,
+                "memory_context": memory_context,
+                "user_id": user_id,
+            }
+            if image is not None:
+                call_kwargs["image"] = image
+
+            # Execute with tracing span if available
+            if tracer:
+                with tracer.start_as_current_span(
+                    "ChatBotAgent.execute",
+                    attributes={
+                        "agent.type": "main",
+                        "agent.mode": "hierarchical",
+                        "agent.user_id": user_id,
+                        "agent.tools_count": len(tools),
+                        "agent.max_iters": self.max_iters,
+                        "input.message_length": len(user_message),
+                        "input.has_image": image is not None,
+                    },
+                ) as span:
+                    result = await react.acall(**call_kwargs)
+                    response = getattr(result, "response", str(result))
+
+                    # Add output attributes
+                    span.set_attribute("output.response_length", len(response))
+                    if self.include_reasoning_trace and hasattr(result, "trajectory"):
+                        span.set_attribute(
+                            "output.iterations", len(result.trajectory)
+                        )
+            else:
+                result = await react.acall(**call_kwargs)
+                response = getattr(result, "response", str(result))
+
+            return AgentResponse(
+                response=response,
+                reasoning_trace=self._extract_trace(result)
+                if self.include_reasoning_trace
+                else None,
+            )
+
+        except Exception as e:
+            logger.error(f"Hierarchical ReAct execution failed: {e}", exc_info=True)
+            return AgentResponse(
+                response="I apologize, but I encountered an error processing your request. Please try again."
+            )
+
+    async def _execute_flat(
+        self,
+        tools: list,
+        user_message: str,
+        history_str: str,
+        memory_context: str,
+        user_id: str,
+        image: dspy.Image | None = None,
+    ) -> AgentResponse:
+        """Execute ReAct with all MCP tools loaded directly (flat mode).
+
+        Legacy behavior where all MCP tools are loaded upfront.
+        MCP sessions are kept open during the entire ReAct execution.
+
+        Args:
+            tools: Pre-built tool list (base + memory, no meta-tools)
+            user_message: The user's message
+            history_str: Formatted conversation history
+            memory_context: Retrieved memory context
+            user_id: User identifier
+            image: Optional image input
+
+        Returns:
+            AgentResponse with the generated response
+        """
         # Use context manager to keep MCP sessions open during ReAct execution
         async with self._mcp_tools_context(user_id) as mcp_tools:
             # Combine base tools with MCP tools
             all_tools = tools + mcp_tools
 
-            logger.debug(f"Agent has {len(all_tools)} tools available for user {user_id}")
+            logger.debug(f"Flat mode: {len(all_tools)} tools for user {user_id}")
             logger.debug(f"Tools: {[getattr(t, 'name', str(t)) for t in all_tools]}")
 
             # Create ReAct module with all tools
@@ -428,11 +599,10 @@ class ChatBotAgent(dspy.Module):
                 max_iters=self.max_iters,
             )
 
-            # Execute the ReAct loop asynchronously
-            # Memory storage happens via store_memory tool calls during execution
-            # Expense operations happen via MCP expense_manager tools
+            # Get tracer for custom spans
+            tracer = get_tracer()
+
             try:
-                # Build kwargs, only include image if provided
                 call_kwargs = {
                     "user_message": user_message,
                     "conversation_history": history_str,
@@ -442,10 +612,33 @@ class ChatBotAgent(dspy.Module):
                 if image is not None:
                     call_kwargs["image"] = image
 
-                result = await react.acall(**call_kwargs)
+                # Execute with tracing span if available
+                if tracer:
+                    with tracer.start_as_current_span(
+                        "ChatBotAgent.execute",
+                        attributes={
+                            "agent.type": "main",
+                            "agent.mode": "flat",
+                            "agent.user_id": user_id,
+                            "agent.tools_count": len(all_tools),
+                            "agent.mcp_tools_count": len(mcp_tools),
+                            "agent.max_iters": self.max_iters,
+                            "input.message_length": len(user_message),
+                            "input.has_image": image is not None,
+                        },
+                    ) as span:
+                        result = await react.acall(**call_kwargs)
+                        response = getattr(result, "response", str(result))
 
-                # Extract response - memory storage already happened via tool calls
-                response = getattr(result, "response", str(result))
+                        # Add output attributes
+                        span.set_attribute("output.response_length", len(response))
+                        if self.include_reasoning_trace and hasattr(result, "trajectory"):
+                            span.set_attribute(
+                                "output.iterations", len(result.trajectory)
+                            )
+                else:
+                    result = await react.acall(**call_kwargs)
+                    response = getattr(result, "response", str(result))
 
                 return AgentResponse(
                     response=response,
@@ -455,13 +648,10 @@ class ChatBotAgent(dspy.Module):
                 )
 
             except Exception as e:
-                # Log the error for debugging
-                logger.error(f"ReAct async execution failed: {e}", exc_info=True)
-                error_msg = (
-                    "I apologize, but I encountered an error processing your request. "
-                    "Please try again."
+                logger.error(f"Flat ReAct execution failed: {e}", exc_info=True)
+                return AgentResponse(
+                    response="I apologize, but I encountered an error processing your request. Please try again."
                 )
-                return AgentResponse(response=error_msg)
 
     def _extract_trace(self, result) -> list[str] | None:
         """Extract reasoning trace from ReAct result.

@@ -80,7 +80,6 @@ NOTE_MANAGER_CONFIG = MCPServerConfig(
     server_script="src/note_manager/server.py",
 )
 
-
 @asynccontextmanager
 async def get_mcp_session(
     config: MCPServerConfig,
