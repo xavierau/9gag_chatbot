@@ -38,5 +38,24 @@ class Settings(BaseSettings):
     # Session Memory Configuration
     session_message_limit: int = 10  # Max messages for agent context
 
+    # Google OAuth Configuration
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+    google_oauth_redirect_uri: str = "http://localhost:8000/api/v1/oauth/google/callback"
+    google_oauth_encryption_key: str = ""  # Fernet key for token encryption
+
+    # Internal API Security (for MCP servers)
+    internal_api_secret: str = ""
+
+    # WhatsApp API Configuration
+    whatsapp_api_url: str = ""
+    whatsapp_api_token: str = ""
+
+    # Langfuse Observability Configuration
+    langfuse_enabled: bool = True
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"  # EU region default
+
 
 settings = Settings()

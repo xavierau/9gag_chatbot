@@ -12,7 +12,13 @@
       "Bash(.venv/bin/pytest tests/ -v -k 'not integration' --tb=short -x)",
       "Bash(.venv/bin/pytest:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__get-library-docs"
+      "mcp__context7__get-library-docs",
+      "Bash(python3:*)",
+      "Bash(uv sync:*)",
+      "Bash(alembic upgrade:*)",
+      "Bash(done)",
+      "Bash(.venv/bin/python:*)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

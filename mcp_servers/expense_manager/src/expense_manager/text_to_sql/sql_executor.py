@@ -5,6 +5,7 @@ proper parameter binding and error handling.
 """
 
 import logging
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from datetime import date, datetime
@@ -14,6 +15,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
+
+# Pattern for ISO date strings (YYYY-MM-DD)
+DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# Pattern for ISO datetime strings (YYYY-MM-DDTHH:MM:SS or with timezone)
+DATETIME_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}")
 
 
 @dataclass
@@ -42,6 +48,49 @@ class SQLExecutor:
             session: Async SQLAlchemy session
         """
         self.session = session
+
+    def _convert_parameter(self, value: Any) -> Any:
+        """Convert string parameters to appropriate Python types for asyncpg.
+
+        asyncpg requires native Python types (date, datetime) instead of
+        ISO format strings when binding to date/timestamp columns.
+
+        Args:
+            value: Parameter value to convert
+
+        Returns:
+            Converted value (date/datetime object or original value)
+        """
+        if not isinstance(value, str):
+            return value
+
+        # Try to parse as date (YYYY-MM-DD)
+        if DATE_PATTERN.match(value):
+            try:
+                return date.fromisoformat(value)
+            except ValueError:
+                pass
+
+        # Try to parse as datetime (YYYY-MM-DDTHH:MM:SS...)
+        if DATETIME_PATTERN.match(value):
+            try:
+                # Handle both 'T' and space separators
+                return datetime.fromisoformat(value.replace(" ", "T"))
+            except ValueError:
+                pass
+
+        return value
+
+    def _convert_parameters(self, parameters: dict[str, Any]) -> dict[str, Any]:
+        """Convert all parameters in a dictionary.
+
+        Args:
+            parameters: Dictionary of parameter names to values
+
+        Returns:
+            New dictionary with converted values
+        """
+        return {key: self._convert_parameter(value) for key, value in parameters.items()}
 
     def _serialize_value(self, value: Any) -> Any:
         """Convert database values to JSON-serializable types.
@@ -108,7 +157,11 @@ class SQLExecutor:
         """
         logger.info(f"[SQLExecutor] Executing SQL query...")
         logger.debug(f"[SQLExecutor] SQL: {sql}")
-        logger.debug(f"[SQLExecutor] Parameters: {parameters}")
+        logger.debug(f"[SQLExecutor] Parameters (raw): {parameters}")
+
+        # Convert string dates/datetimes to Python objects for asyncpg
+        parameters = self._convert_parameters(parameters)
+        logger.debug(f"[SQLExecutor] Parameters (converted): {parameters}")
         logger.debug(f"[SQLExecutor] Max rows: {max_rows}")
 
         # Validate it's a SELECT query
@@ -200,17 +253,20 @@ class SQLExecutor:
         Returns:
             ExecutionResult with EXPLAIN information
         """
+        # Convert parameters for asyncpg compatibility
+        converted_params = self._convert_parameters(parameters)
+
         # First get EXPLAIN output
         explain_sql = f"EXPLAIN {sql}"
         try:
-            explain_result = await self.session.execute(text(explain_sql), parameters)
+            explain_result = await self.session.execute(text(explain_sql), converted_params)
             explain_rows = explain_result.fetchall()
             explain_output = "\n".join(str(row[0]) for row in explain_rows)
         except Exception:
             explain_output = "Could not generate query plan"
 
-        # Then execute the actual query
-        result = await self.execute(sql, parameters)
+        # Then execute the actual query (will also convert, but already converted)
+        result = await self.execute(sql, converted_params)
 
         # Add explain output to the result
         if result.success:
