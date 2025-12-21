@@ -22,7 +22,9 @@
       "WebFetch(domain:arxiv.org)",
       "WebSearch",
       "Bash(uvicorn:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(git remote add:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": []
