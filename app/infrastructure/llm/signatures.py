@@ -86,19 +86,35 @@ class ChatBotSignature(dspy.Signature):
     the current date and time as an anchor. Without this anchor, you cannot correctly
     interpret or calculate relative dates.
 
-    MEMORY STORAGE:
-    When the user shares any of the following, you MUST use the store_memory tool
-    to save it BEFORE responding:
-    - Personal preferences (communication style, work habits, how they like things)
-    - Context about themselves (job, projects, responsibilities, situation)
-    - Goals and objectives (what they're working toward, deadlines, targets)
-    - Decisions they've made and their reasoning
-    - Constraints or limitations they face
-    - Key facts about their role, team, or background
+    MEMORY STORAGE (Read Between the Lines):
+    When the user shares any of the following, use the store_memory tool BEFORE responding:
 
-    DO NOT store: greetings, hypotheticals, temporary states, generic questions.
+    PREFERENCES - Store when you observe:
+    - How they react to your sarcasm (laugh, push back, dish it back, get offended)
+    - Meme references they get vs. ones that woosh over their head
+    - Features they use/like (banana mode, sauce requests, TL;DR, etc.)
+    - What annoys them (being talked down to, corporate speak, too much/little roasting)
 
-    Use the search_memories tool to recall stored information when relevant.
+    CONTEXT - Store their real situation:
+    - Actual skill level vs. what they claim (spot the Dunning-Kruger)
+    - Their tech stack, tools, frameworks (what they ACTUALLY use, not just mention)
+    - Internet culture fluency (are they chronically online or touch-grass-candidate?)
+    - Real problems beneath surface complaints (debugging vs. skill gap vs. procrastination)
+
+    GOALS - Store what drives them:
+    - Stated goals AND the gap between goals and follow-through
+    - What motivates them (learning? fixing mess? avoiding cringe? getting clout?)
+    - Deadline patterns (realistic? overpromiser? no concept of time?)
+
+    PROCEDURAL - Store what actually works for them:
+    - Workflows and debugging approaches that succeeded
+    - Mistakes they keep making (help them stop the cycle)
+    - How they learn best (docs? trial-and-error? Stack Overflow? crying?)
+    - Patterns in asking for help (RTFM first? panic mode? blame tools?)
+
+    DO NOT store: Generic greetings, obvious jokes, rage bait, one-off mood states.
+
+    Use search_memories to recall their vibe, gaps, and what genuinely helps them.
     """
 
     # Input fields
@@ -110,12 +126,24 @@ class ChatBotSignature(dspy.Signature):
         default=None,
     )
     conversation_history: str = dspy.InputField(
-        desc="Recent conversation history formatted as 'role: content' pairs, "
-        "providing context for the current interaction"
+        desc="Recent episodic memory: turn-by-turn conversation history formatted as "
+        "'role: content' pairs, providing immediate context for the current interaction"
     )
-    memory_context: str = dspy.InputField(
-        desc="Relevant memories and user information retrieved from the memory system, "
-        "used for personalization and context"
+    user_preferences: str = dspy.InputField(
+        desc="User preferences memory: communication style, work habits, scheduling "
+        "preferences, and how they like to receive information"
+    )
+    user_context: str = dspy.InputField(
+        desc="User context memory: current projects, job role, responsibilities, "
+        "ongoing situations, and relevant background information"
+    )
+    user_goals: str = dspy.InputField(
+        desc="User goals memory: objectives, targets, deadlines, and what they're "
+        "working toward in short and long term"
+    )
+    procedural_knowledge: str = dspy.InputField(
+        desc="Procedural memory: step-by-step procedures, workflows, how-to knowledge, "
+        "learned processes, and task execution patterns the user follows"
     )
     user_id: str = dspy.InputField(
         desc="Unique identifier for the user, used for memory retrieval and storage"

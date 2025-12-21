@@ -20,6 +20,7 @@ class CategoryType(str, Enum):
     CONSTRAINTS = "constraints"
     DECISIONS = "decisions"
     PERSONAL = "personal"
+    PROCEDURAL = "procedural"
 
 
 @dataclass(frozen=True)
@@ -176,55 +177,79 @@ class MemoryConfig:
 
 
 def get_personal_assistant_categories() -> list[MemoryCategory]:
-    """Get recommended categories for a personal AI assistant."""
+    """Get recommended categories for The Captain - a 9gag-style AI with deep personalization."""
     return [
         MemoryCategory(
             name="preferences",
             description=(
-                "User's communication style, work habits, scheduling preferences, "
-                "and how they like to receive information"
+                "User's vibe, humor tolerance (how much roasting they can take), "
+                "meme literacy level, preferred Captain features (banana mode, TL;DR, sauce), "
+                "how they like info delivered (sarcastic, direct, with references), "
+                "and what annoys them (corporate speak, cringe, being patronized)"
             ),
         ),
         MemoryCategory(
             name="context",
             description=(
-                "User's current projects, job role, responsibilities, "
-                "ongoing situations, and relevant background"
+                "User's real situation: their actual job/projects (not just what they claim), "
+                "their internet culture background (normie to veteran scale), "
+                "what they're REALLY struggling with (read between the lines), "
+                "their procrastination patterns, scrolling habits, and chronically-online status"
             ),
         ),
         MemoryCategory(
             name="goals",
             description=(
-                "User's objectives, targets, deadlines, "
-                "and what they're working toward short and long term"
+                "What user says they want vs. what they actually need, "
+                "their stated objectives and deadlines, "
+                "patterns in goal-setting (overpromiser? realistic? delusional?), "
+                "follow-through rate, and what motivates them (clout? learning? fixing a mess?)"
+            ),
+        ),
+        MemoryCategory(
+            name="procedural",
+            description=(
+                "User's actual workflows and how they get things done, "
+                "their tech stack and tools, debugging/problem-solving patterns, "
+                "repeated mistakes they make, successful strategies that worked before, "
+                "and their preferred learning style (RTFM? trial-and-error? YouTube?)"
             ),
         ),
     ]
 
 
 def get_personal_assistant_instructions() -> MemoryInstructions:
-    """Get recommended instructions for a personal AI assistant."""
+    """Get memory instructions for The Captain - optimized for 9gag-style personalization."""
     return MemoryInstructions(
         extract=[
-            "User's stated preferences and how they like things done",
-            "Background context about their work, projects, or situation",
-            "Goals, objectives, and deadlines they mention",
-            "Decisions they've made and their reasoning",
-            "Constraints, limitations, or restrictions they face",
-            "Key facts about their role, team, or responsibilities",
+            "User's humor style and meme literacy (do they get the references? what makes them laugh?)",
+            "How they respond to sarcasm and roasting (can they take it? do they dish it back?)",
+            "Their actual problems vs. what they say (read between the lines of complaints)",
+            "Technical skills and knowledge gaps (what do they pretend to know vs. actually know?)",
+            "Patterns in how they ask for help (do they RTFM first? panic immediately? blame tools?)",
+            "Their internet culture level (normie, casual, veteran, or touch-grass-resistant)",
+            "Preferred Captain features they use/request (banana mode, sauce, TL;DR, etc.)",
+            "What genuinely helps them vs. what they think they need",
+            "Their procrastination tells and productivity patterns",
+            "Workflows, tech stack, and tools they actually use (not just mention)",
+            "Mistakes they repeat and lessons they've learned",
+            "Goals and deadlines with their track record of follow-through",
+            "What motivates them (learning, fixing mess, clout, avoiding embarrassment)",
+            "Topics that trigger rants or strong opinions",
         ],
         ignore=[
-            "Greetings, pleasantries, or filler conversation",
-            "Hypothetical scenarios or 'what if' discussions",
-            "Generic questions without personal context",
-            "Temporary states like 'I'm tired today'",
-            "Information they explicitly ask to forget",
+            "Generic 'hello' and 'thanks' (we're not corporate)",
+            "Rage bait and political rants (deflect these)",
+            "Hypothetical 'what if' scenarios without context",
+            "Temporary mood states unless they're patterns",
+            "Obvious sarcasm or jokes from user (don't over-analyze)",
+            "Questions they can easily Google (unless revealing a learning gap)",
         ],
     )
 
 
 def create_default_memory_config() -> MemoryConfig:
-    """Create the default memory configuration for personal AI assistant."""
+    """Create the default memory configuration for The Captain (9gag-style AI assistant)."""
     return MemoryConfig(
         categories=get_personal_assistant_categories(),
         instructions=get_personal_assistant_instructions(),

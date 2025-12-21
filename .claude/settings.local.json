@@ -18,7 +18,11 @@
       "Bash(alembic upgrade:*)",
       "Bash(done)",
       "Bash(.venv/bin/python:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "WebFetch(domain:arxiv.org)",
+      "WebSearch",
+      "Bash(uvicorn:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []

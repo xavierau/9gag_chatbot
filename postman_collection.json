@@ -43,8 +43,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/health",
-              "host": ["{{base_url}}"],
-              "path": ["health"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
             },
             "description": "Check if the API server is healthy and running"
           },
@@ -90,8 +94,15 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Send a chat message to the AI agent. The agent will respond using DSPy ReAct with memory and MCP tools."
           },
@@ -113,8 +124,15 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Send a chat message with an image URL for multimodal analysis"
           },
@@ -136,8 +154,15 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Send a chat message with an image that requires authentication (Bearer token)"
           },
@@ -159,8 +184,15 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Use the chat to add an expense (will delegate to expense_manager MCP server)"
           },
@@ -182,8 +214,15 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Use the chat to list expenses (will delegate to expense_manager MCP server)"
           },
@@ -205,12 +244,135 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/chat/",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "chat", ""]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
             },
             "description": "Use the chat to create a note (will delegate to note_manager MCP server)"
           },
           "response": []
+        },
+        {
+          "name": "Test Meme Humor (Preferences Memory)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"message\": \"Lol I love your sarcasm! Keep roasting me Captain. Also, can you convert my height to bananas? I'm 175cm tall.\", \"user_id\": \"{{user_id}}\", \"session_id\": \"{{session_id}}\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
+            },
+            "description": "Test The Captain's humor and banana mode. Should populate PREFERENCES memory with humor tolerance and preferred features."
+          }
+        },
+        {
+          "name": "Test Technical Help (Procedural Memory)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"message\": \"I'm debugging a FastAPI async issue. I usually check the asyncio event loop first, then look at the traceback. What should I try?\", \"user_id\": \"{{user_id}}\", \"session_id\": \"{{session_id}}\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
+            },
+            "description": "Test procedural knowledge capture. Should populate PROCEDURAL memory with debugging workflow and tech stack."
+          }
+        },
+        {
+          "name": "Test Goal Setting (Goals Memory)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"message\": \"I want to ship my AI chatbot by next Friday. I always say I'll finish projects but I get distracted easily.\", \"user_id\": \"{{user_id}}\", \"session_id\": \"{{session_id}}\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
+            },
+            "description": "Test goals memory. Should store: goal, deadline, and pattern (gets distracted, low follow-through)."
+          }
+        },
+        {
+          "name": "Test Context Understanding (Context Memory)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"message\": \"I'm a full-stack dev working on a side project. I spend way too much time on Reddit instead of coding lol. I know Python and React pretty well.\", \"user_id\": \"{{user_id}}\", \"session_id\": \"{{session_id}}\"}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/chat/",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "chat",
+                ""
+              ]
+            },
+            "description": "Test context memory. Should store: actual job, tech stack, procrastination pattern, and internet culture fluency."
+          }
         }
       ]
     },
@@ -224,8 +386,16 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/api/v1/oauth/google/authorize?user_id={{user_id}}&whatsapp_phone={{whatsapp_phone}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "oauth", "google", "authorize"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "oauth",
+                "google",
+                "authorize"
+              ],
               "query": [
                 {
                   "key": "user_id",
@@ -250,8 +420,16 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/api/v1/oauth/google/status?user_id={{user_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "oauth", "google", "status"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "oauth",
+                "google",
+                "status"
+              ],
               "query": [
                 {
                   "key": "user_id",
@@ -280,8 +458,16 @@
             },
             "url": {
               "raw": "{{base_url}}/api/v1/oauth/google/revoke",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "oauth", "google", "revoke"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "oauth",
+                "google",
+                "revoke"
+              ]
             },
             "description": "Revoke a user's Google OAuth tokens (unlink Google account)"
           },
@@ -306,8 +492,17 @@
             ],
             "url": {
               "raw": "{{base_url}}/api/v1/internal/oauth/google/token?user_id={{user_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "internal", "oauth", "google", "token"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "internal",
+                "oauth",
+                "google",
+                "token"
+              ],
               "query": [
                 {
                   "key": "user_id",
@@ -333,8 +528,17 @@
             ],
             "url": {
               "raw": "{{base_url}}/api/v1/internal/oauth/google/status?user_id={{user_id}}",
-              "host": ["{{base_url}}"],
-              "path": ["api", "v1", "internal", "oauth", "google", "status"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "internal",
+                "oauth",
+                "google",
+                "status"
+              ],
               "query": [
                 {
                   "key": "user_id",

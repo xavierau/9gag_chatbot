@@ -256,63 +256,85 @@ class ChatBotAgent(dspy.Module):
 
         return "\n".join(formatted)
 
-    def _retrieve_memory_context(self, user_id: str, query: str) -> str:
-        """Retrieve relevant memory context organized by category.
-
-        Pulls from all configured categories to provide comprehensive
-        context for the LLM, including user preferences, current context,
-        and goals.
+    def _retrieve_memory_by_category(
+        self, user_id: str, query: str, category: str, limit: int = 3
+    ) -> str:
+        """Retrieve memories from a specific category.
 
         Args:
             user_id: The user ID for memory lookup.
             query: The current user query for semantic search.
+            category: The category name to retrieve from.
+            limit: Maximum number of memories to retrieve.
 
         Returns:
-            Formatted string of relevant memories organized by category.
+            Formatted string of relevant memories from the category.
         """
         try:
-            context_parts = []
-
-            # Get configured categories from the memory service
-            categories = self.memory_service.config.categories
-
-            # Retrieve memories from each category
-            for category in categories:
-                result = self.memory_service.search_by_category(
-                    query=query,
-                    user_id=user_id,
-                    category=category.name,
-                    limit=2,
+            result = self.memory_service.search_by_category(
+                query=query,
+                user_id=user_id,
+                category=category,
+                limit=limit,
+            )
+            if result.memories:
+                memories_text = "\n".join(
+                    f"- {mem.content}" for mem in result.memories
                 )
-                if result.memories:
-                    # Format with category header
-                    memories_text = "\n".join(
-                        f"  - {mem.content}" for mem in result.memories
-                    )
-                    context_parts.append(f"[{category.name}]\n{memories_text}")
+                return memories_text
 
-            if not context_parts:
-                return "No relevant memories found for this user."
-
-            return "User context from memory:\n" + "\n\n".join(context_parts)
+            return f"No {category} information available."
 
         except Exception as e:
-            logger.warning(f"Memory retrieval failed: {e}")
-            return f"Memory retrieval unavailable: {str(e)}"
+            logger.warning(f"Memory retrieval failed for {category}: {e}")
+            return f"Memory retrieval unavailable for {category}."
 
-    async def _retrieve_memory_context_async(self, user_id: str, query: str) -> str:
-        """Async version of memory context retrieval.
+    def _retrieve_memory_contexts(
+        self, user_id: str, query: str
+    ) -> dict[str, str]:
+        """Retrieve relevant memory contexts separated by category type.
+
+        Retrieves memories from each category type (preferences, context,
+        goals, procedural) and returns them as separate strings for
+        distinct LLM input fields.
 
         Args:
             user_id: The user ID for memory lookup.
             query: The current user query for semantic search.
 
         Returns:
-            Formatted string of relevant memories.
+            Dict mapping category names to formatted memory strings.
+        """
+        return {
+            "preferences": self._retrieve_memory_by_category(
+                user_id, query, "preferences", limit=3
+            ),
+            "context": self._retrieve_memory_by_category(
+                user_id, query, "context", limit=3
+            ),
+            "goals": self._retrieve_memory_by_category(
+                user_id, query, "goals", limit=2
+            ),
+            "procedural": self._retrieve_memory_by_category(
+                user_id, query, "procedural", limit=3
+            ),
+        }
+
+    async def _retrieve_memory_contexts_async(
+        self, user_id: str, query: str
+    ) -> dict[str, str]:
+        """Async version of memory contexts retrieval.
+
+        Args:
+            user_id: The user ID for memory lookup.
+            query: The current user query for semantic search.
+
+        Returns:
+            Dict mapping category names to formatted memory strings.
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, self._retrieve_memory_context, user_id, query
+            None, self._retrieve_memory_contexts, user_id, query
         )
 
     def forward(
@@ -344,13 +366,14 @@ class ChatBotAgent(dspy.Module):
         logger.debug("\n%s", history_str)
         logger.debug("=" * 60)
 
-        # Retrieve relevant memories
-        memory_context = self._retrieve_memory_context(user_id, user_message)
+        # Retrieve relevant memories separated by category
+        memory_contexts = self._retrieve_memory_contexts(user_id, user_message)
 
         logger.debug("=" * 60)
-        logger.debug("MEM0 CONTEXT FOR LLM (user_id=%s)", user_id)
+        logger.debug("MEM0 CONTEXTS FOR LLM (user_id=%s)", user_id)
         logger.debug("=" * 60)
-        logger.debug("\n%s", memory_context)
+        for category, context in memory_contexts.items():
+            logger.debug("[%s]\n%s\n", category.upper(), context)
         logger.debug("=" * 60)
 
         # Create user-specific tools
@@ -370,7 +393,10 @@ class ChatBotAgent(dspy.Module):
             call_kwargs = {
                 "user_message": user_message,
                 "conversation_history": history_str,
-                "memory_context": memory_context,
+                "user_preferences": memory_contexts["preferences"],
+                "user_context": memory_contexts["context"],
+                "user_goals": memory_contexts["goals"],
+                "procedural_knowledge": memory_contexts["procedural"],
                 "user_id": user_id,
             }
             if image is not None:
@@ -439,8 +465,8 @@ class ChatBotAgent(dspy.Module):
         # Format conversation history (CPU-bound, fast)
         history_str = self._format_conversation_history(conversation_history or [])
 
-        # Retrieve relevant memories asynchronously
-        memory_context = await self._retrieve_memory_context_async(
+        # Retrieve relevant memories asynchronously separated by category
+        memory_contexts = await self._retrieve_memory_contexts_async(
             user_id, user_message
         )
 
@@ -454,7 +480,7 @@ class ChatBotAgent(dspy.Module):
                 tools=tools,
                 user_message=user_message,
                 history_str=history_str,
-                memory_context=memory_context,
+                memory_contexts=memory_contexts,
                 user_id=user_id,
                 image=image,
             )
@@ -464,7 +490,7 @@ class ChatBotAgent(dspy.Module):
                 tools=tools,
                 user_message=user_message,
                 history_str=history_str,
-                memory_context=memory_context,
+                memory_contexts=memory_contexts,
                 user_id=user_id,
                 image=image,
             )
@@ -474,7 +500,7 @@ class ChatBotAgent(dspy.Module):
         tools: list,
         user_message: str,
         history_str: str,
-        memory_context: str,
+        memory_contexts: dict[str, str],
         user_id: str,
         image: dspy.Image | None = None,
     ) -> AgentResponse:
@@ -487,7 +513,7 @@ class ChatBotAgent(dspy.Module):
             tools: Pre-built tool list (base + memory + meta-tools)
             user_message: The user's message
             history_str: Formatted conversation history
-            memory_context: Retrieved memory context
+            memory_contexts: Retrieved memory contexts by category
             user_id: User identifier
             image: Optional image input
 
@@ -513,7 +539,10 @@ class ChatBotAgent(dspy.Module):
             call_kwargs = {
                 "user_message": user_message,
                 "conversation_history": history_str,
-                "memory_context": memory_context,
+                "user_preferences": memory_contexts["preferences"],
+                "user_context": memory_contexts["context"],
+                "user_goals": memory_contexts["goals"],
+                "procedural_knowledge": memory_contexts["procedural"],
                 "user_id": user_id,
             }
             if image is not None:
@@ -564,7 +593,7 @@ class ChatBotAgent(dspy.Module):
         tools: list,
         user_message: str,
         history_str: str,
-        memory_context: str,
+        memory_contexts: dict[str, str],
         user_id: str,
         image: dspy.Image | None = None,
     ) -> AgentResponse:
@@ -577,7 +606,7 @@ class ChatBotAgent(dspy.Module):
             tools: Pre-built tool list (base + memory, no meta-tools)
             user_message: The user's message
             history_str: Formatted conversation history
-            memory_context: Retrieved memory context
+            memory_contexts: Retrieved memory contexts by category
             user_id: User identifier
             image: Optional image input
 
@@ -606,7 +635,10 @@ class ChatBotAgent(dspy.Module):
                 call_kwargs = {
                     "user_message": user_message,
                     "conversation_history": history_str,
-                    "memory_context": memory_context,
+                    "user_preferences": memory_contexts["preferences"],
+                    "user_context": memory_contexts["context"],
+                    "user_goals": memory_contexts["goals"],
+                    "procedural_knowledge": memory_contexts["procedural"],
                     "user_id": user_id,
                 }
                 if image is not None:
@@ -716,26 +748,32 @@ class SimpleChatBotAgent(dspy.Module):
         else:
             history_str = "No previous conversation."
 
-        # Get memory context
-        try:
-            result = self.memory_service.search(
-                query=user_message, user_id=user_id, limit=3
-            )
-            if result.memories:
-                memory_str = self.memory_service.format_context(
-                    result.memories, include_category=True
+        # Get memory contexts by category
+        def get_category_memories(category: str, limit: int = 3) -> str:
+            try:
+                result = self.memory_service.search_by_category(
+                    query=user_message, user_id=user_id, category=category, limit=limit
                 )
-            else:
-                memory_str = "No relevant memories."
-        except Exception as e:
-            logger.warning(f"Memory search failed: {e}")
-            memory_str = "Memory unavailable."
+                if result.memories:
+                    return "\n".join(f"- {m.content}" for m in result.memories)
+                return f"No {category} information available."
+            except Exception as e:
+                logger.warning(f"Memory search failed for {category}: {e}")
+                return f"Memory unavailable for {category}."
+
+        preferences = get_category_memories("preferences", 3)
+        context = get_category_memories("context", 3)
+        goals = get_category_memories("goals", 2)
+        procedural = get_category_memories("procedural", 3)
 
         # Generate response
         result = self.cot(
             user_message=user_message,
             conversation_history=history_str,
-            memory_context=memory_str,
+            user_preferences=preferences,
+            user_context=context,
+            user_goals=goals,
+            procedural_knowledge=procedural,
             user_id=user_id,
         )
 
@@ -767,30 +805,38 @@ class SimpleChatBotAgent(dspy.Module):
         else:
             history_str = "No previous conversation."
 
-        # Get memory context async
+        # Get memory contexts async
         loop = asyncio.get_event_loop()
 
-        def get_memory():
+        def get_category_memories(category: str, limit: int = 3) -> str:
             try:
-                result = self.memory_service.search(
-                    query=user_message, user_id=user_id, limit=3
+                result = self.memory_service.search_by_category(
+                    query=user_message, user_id=user_id, category=category, limit=limit
                 )
                 if result.memories:
-                    return self.memory_service.format_context(
-                        result.memories, include_category=True
-                    )
-                return "No relevant memories."
+                    return "\n".join(f"- {m.content}" for m in result.memories)
+                return f"No {category} information available."
             except Exception as e:
-                logger.warning(f"Memory search failed: {e}")
-                return "Memory unavailable."
+                logger.warning(f"Memory search failed for {category}: {e}")
+                return f"Memory unavailable for {category}."
 
-        memory_str = await loop.run_in_executor(None, get_memory)
+        preferences = await loop.run_in_executor(
+            None, get_category_memories, "preferences", 3
+        )
+        context = await loop.run_in_executor(None, get_category_memories, "context", 3)
+        goals = await loop.run_in_executor(None, get_category_memories, "goals", 2)
+        procedural = await loop.run_in_executor(
+            None, get_category_memories, "procedural", 3
+        )
 
         # Generate response async
         result = await self.cot.acall(
             user_message=user_message,
             conversation_history=history_str,
-            memory_context=memory_str,
+            user_preferences=preferences,
+            user_context=context,
+            user_goals=goals,
+            procedural_knowledge=procedural,
             user_id=user_id,
         )
 
