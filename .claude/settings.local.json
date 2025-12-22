@@ -24,7 +24,8 @@
       "Bash(uvicorn:*)",
       "Bash(curl:*)",
       "Bash(git remote add:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []

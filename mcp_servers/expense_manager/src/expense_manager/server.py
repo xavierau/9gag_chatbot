@@ -14,6 +14,7 @@ Usage:
 """
 
 import logging
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import date
@@ -27,10 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from expense_manager.config import settings
 from expense_manager.constants import PredefinedCategory
 
-# Configure logging
+# Configure logging to stderr (MCP protocol requires stdout for JSONRPC messages only)
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.DEBUG if settings.debug else logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    stream=sys.stderr,  # CRITICAL: Use stderr for MCP servers
 )
 logger = logging.getLogger(__name__)
 

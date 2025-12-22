@@ -4,11 +4,11 @@ import uuid
 
 import dspy
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from PIL import Image as PILImage
 
 from app.core.dependencies import ChatBotAgentDep, SessionMemoryServiceDep
-from app.schemas.chat import ChatRequest, ChatResponse
+from app.schemas.chat import ChatRequest, ChatResponse, LatestSessionResponse
 
 logger = logging.getLogger(__name__)
 
@@ -99,4 +99,39 @@ async def chat(
         response=result.response,
         user_id=user_id,
         session_id=session.id,
+    )
+
+
+@router.get("/sessions/latest", response_model=LatestSessionResponse)
+async def get_latest_session(
+    user_id: str = Query(..., description="User ID to get latest session for"),
+    session_service: SessionMemoryServiceDep = None,
+) -> LatestSessionResponse:
+    """Get the latest session ID for a user.
+
+    Args:
+        user_id: The user's unique identifier.
+        session_service: The SessionMemoryService injected via dependency.
+
+    Returns:
+        LatestSessionResponse with the latest session_id if present.
+    """
+    # Get the latest session (limit=1, ordered by created_at desc)
+    sessions = await session_service.list_user_sessions(
+        user_id=user_id,
+        limit=1,
+        offset=0,
+    )
+
+    if sessions:
+        return LatestSessionResponse(
+            user_id=user_id,
+            session_id=sessions[0].id,
+            has_session=True,
+        )
+
+    return LatestSessionResponse(
+        user_id=user_id,
+        session_id=None,
+        has_session=False,
     )

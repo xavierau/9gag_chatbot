@@ -30,3 +30,11 @@ class ChatResponse(BaseModel):
     response: str
     user_id: str | None = None
     session_id: str | None = None
+
+
+class LatestSessionResponse(BaseModel):
+    """Response model for getting the latest session."""
+
+    user_id: str
+    session_id: str | None = None
+    has_session: bool
