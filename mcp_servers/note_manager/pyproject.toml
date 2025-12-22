@@ -2,7 +2,7 @@
 name = "note-manager"
 version = "0.1.0"
 description = "MCP server for note management - CRUD operations with AI summarization and semantic search"
-requires-python = ">=3.13"
+requires-python = ">=3.11,<3.15"
 dependencies = [
     "fastmcp>=2.0.0",
     "sqlalchemy[asyncio]>=2.0.0",
