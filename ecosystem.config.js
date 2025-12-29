@@ -21,7 +21,7 @@ module.exports = {
     {
       name: appName,
       script: '.venv/bin/python',
-      args: `-m uvicorn app.main:app --host 0.0.0.0 --port ${port}`,
+      args: `-m uvicorn app.main:app --host 0.0.0.0 --port ${port} --workers 1`,
       interpreter: 'none',
       cwd: __dirname,
       env_file: '.env',
